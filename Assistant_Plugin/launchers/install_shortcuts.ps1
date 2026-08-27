@@ -22,9 +22,6 @@ if (-not (Test-Path $desktop)) {
 # generic script file. imageres.dll is present on every supported build.
 $iconLibrary = Join-Path $env:SystemRoot "System32\imageres.dll"
 
-# Three icons, not four. MIC_TEST already lists every recording device, so a
-# separate Microphone List icon was a second way to do part of the same job -
-# and an extra icon is one more thing to read past on a desktop.
 $shortcuts = @(
     @{ Name = "JOE";
        Target = "START_JOE.cmd";
@@ -36,6 +33,14 @@ $shortcuts = @(
        Icon = 168;
        Description = "Which microphone JOE hears, and whether it understands you" },
 
+    # Kept alongside the test at Mike's instruction. The test also lists
+    # devices, but listing is the quick question - which microphone is JOE
+    # going to use - and it answers without anyone having to speak.
+    @{ Name = "JOE Microphone List";
+       Target = "launchers\MIC_LIST.cmd";
+       Icon = 24;
+       Description = "Which microphone JOE will use - no speaking required" },
+
     @{ Name = "JOE Status";
        Target = "launchers\JOE_STATUS.cmd";
        Icon = 109;
@@ -45,7 +50,7 @@ $shortcuts = @(
 # Names this script has used before. Removed on every run so a rename leaves
 # nothing orphaned on the desktop. Only names this script itself created are
 # ever touched - nothing else on the desktop is read, moved, or deleted.
-$retired = @("JOE Microphone List", "JOE Settings and Status")
+$retired = @("JOE Settings and Status")
 
 $shell = New-Object -ComObject WScript.Shell
 $made = 0
