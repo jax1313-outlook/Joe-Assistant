@@ -717,44 +717,151 @@ def step_17_containment(proof: Proof, service) -> None:
     )
 
 
+def _plugin_sources(*folders):
+    """Every .py under the named plugin folders, with its text."""
+    for folder in folders:
+        root = PLUGIN_ROOT / folder if folder else PLUGIN_ROOT
+        for path in root.rglob("*.py"):
+            text = str(path)
+            if "_workspace" in text or "__pycache__" in text or "Deployment" in text:
+                continue
+            yield path, path.read_text(encoding="utf-8", errors="replace")
+
+
 def step_18_drift(proof: Proof, service) -> None:
+    """Doctrine drift, checked rather than claimed.
+
+    Every line below was once the literal value True. Eleven claims typed into
+    a list, reporting PASS for as long as the file existed - among them "No
+    approval by silence or omission", which is the constitutional line the
+    transmission amendment turns on, and "No fixture data presented as live",
+    which is the guarantee the whole program is built around. A claim nobody
+    checks is worse than no claim at all, because it reads as covered.
+
+    Two of the eleven were about DISPATCH, and this suite runs inside JOE. They
+    are no longer made here. Asserting a fact about a repository this process
+    cannot see is how the list got into this state.
+    """
     import re as _re
 
     checks = []
-    checks.append(("Dispatch not required to run JOE", True))
-    checks.append(("Assistant not required to run Dispatch", True))
-    dispatch_dirs = [
-        p for p in PLUGIN_ROOT.rglob("*")
-        if "dispatch" in p.name.lower() and p.is_dir()
-    ]
-    checks.append(("No Assistant code copied into Dispatch", True))
-    manager = []
-    for path in PLUGIN_ROOT.rglob("*.py"):
-        if "_workspace" in str(path) or "__pycache__" in str(path):
+
+    # --- behaviour, from responses produced in this run ------------------
+    # Drift shows up in what JOE actually returns, not only in its source.
+    observed = []
+    for question in ("help", "Find the rate floor policy",
+                     "What does the appointment window policy say"):
+        try:
+            observed.append(service.ask(question).response)
+        except Exception:  # a failing capability is step 2's business
+            pass
+
+    port = service.dispatch
+    checks.append((
+        "Dispatch not required to run JOE",
+        (not port.connected) and any(r.ok for r in observed),
+    ))
+
+    # Every response carries operational_write. If a capability ever wrote
+    # operational truth, this is where it would have to admit it.
+    wrote = [r.capability for r in observed if getattr(r, "operational_write", False)]
+    checks.append(("No component writes operational truth", not wrote))
+
+    # Silence authorising nothing is checked twice: no response produced here
+    # claims approval, and no line of source sets those flags true.
+    claimed = [r.capability for r in observed
+               if r.approved or r.decided or r.acted_on]
+    # Product code only. tests/ legitimately sets these flags true - that is
+    # what test_authority_flags_are_forced_false does, to prove the governor
+    # forces them back - and a check that fails on its own guard being tested
+    # trains people to weaken the check.
+    setters = [path.name for path, text in _plugin_sources(
+        "app", "adapters", "ui", "memory", "library", "research", "voice",
+        "outlook", "contracts", "governance")
+        if _re.search(r"\b(approved|decided|acted_on)\s*=\s*True", text)]
+    checks.append((
+        "No approval by silence or omission",
+        (not claimed) and (not setters),
+    ))
+
+    # Fixture data must say it is fixture data, in the text Mike reads.
+    laundered = []
+    for response in observed:
+        sampled = [p for p in response.provenance if p.mode == SourceMode.SAMPLE]
+        if not sampled:
             continue
-        if _re.search(r"\bclass\s+\w*Manager\b", path.read_text(encoding="utf-8")):
-            manager.append(path.name)
+        shown = ((response.written or "") + " " + (response.answer or "")
+                 + " " + " ".join(response.notices)).upper()
+        if "SAMPLE" not in shown:
+            laundered.append(response.capability)
+    checks.append(("No fixture data presented as live", not laundered))
+
+    # Anything claimed LIVE must carry the moment it was read.
+    undated = [p.source for r in observed for p in r.provenance
+               if p.mode == SourceMode.LIVE and not (p.as_of or "").strip()]
+    checks.append(("No stale data presented as current", not undated))
+
+    # --- structure, from the source ---------------------------------------
+    manager = [path.name for path, text in _plugin_sources("")
+               if _re.search(r"\bclass\s+\w*Manager\b", text)]
     checks.append(("No Manager component created", not manager))
-    checks.append(("No component writes operational truth", True))
-    checks.append(("No approval by silence or omission", True))
-    checks.append(
-        ("No fixture data presented as live", True)
-    )
-    checks.append(("No stale data presented as current", True))
-    checks.append(("No general-purpose autonomous agent introduced", True))
-    checks.append(
-        (
-            "No provider-specific code outside adapters",
-            True,
-        )
-    )
-    checks.append(("Mike Zachary remains final authority", True))
+
+    # Nothing may act without being asked. A scheduler, a repeating timer or a
+    # bare polling loop is how an assistant becomes an agent by accident.
+    autonomous = [path.name for path, text in _plugin_sources("app", "adapters")
+                  if _re.search(r"\b(schedule\.every|croniter|threading\.Timer|"
+                                r"while\s+True\s*:)", text)]
+    checks.append(("No general-purpose autonomous agent introduced", not autonomous))
+
+    # A provider's endpoints and SDKs belong behind an adapter. Selecting a
+    # provider by name in service.py is wiring and is fine; speaking its
+    # protocol anywhere else is the drift this catches.
+    leaked = [path.name for path, text in _plugin_sources(
+        "app", "ui", "memory", "library", "research", "voice", "outlook",
+        "contracts", "governance")
+        if _re.search(r"graph\.microsoft|login\.microsoftonline|"
+                      r"^\s*import\s+(msal|anthropic)\b|"
+                      r"^\s*from\s+(msal|anthropic)\b", text, _re.MULTILINE)]
+    checks.append(("No provider-specific code outside adapters", not leaked))
+
+    # The authority flags are read from the running provider, not asserted.
+    reasoning = service.reasoning.status()
+    authority = [key for key in ("can_approve", "can_decide", "can_send",
+                                 "can_schedule", "can_modify_outlook",
+                                 "can_modify_dispatch")
+                 if reasoning.get(key)]
+    checks.append(("Mike Zachary remains final authority", not authority))
+
+    detail = {
+        "No Manager component created": manager,
+        "No approval by silence or omission": claimed + setters,
+        "No fixture data presented as live": laundered,
+        "No stale data presented as current": undated,
+        "No component writes operational truth": wrote,
+        "No general-purpose autonomous agent introduced": autonomous,
+        "No provider-specific code outside adapters": leaked,
+        "Mike Zachary remains final authority": authority,
+    }
+    evidence = []
+    for name, ok in checks:
+        line = ("PASS  " if ok else "FAIL  ") + name
+        if not ok and detail.get(name):
+            line += "   -> " + ", ".join(str(d) for d in detail[name][:3])
+        evidence.append(line)
+    evidence += [
+        "",
+        "responses examined  " + str(len(observed)),
+        "python files read   " + str(len(list(_plugin_sources("")))),
+    ]
+
     proof.record(
         18,
         "Drift tests",
         all(ok for _, ok in checks),
-        [("PASS  " if ok else "FAIL  ") + name for name, ok in checks],
-        note="each drift item is additionally asserted by the automated suite",
+        evidence,
+        note=("claims about the Dispatch repository are not made here - this "
+              "suite runs inside JOE and cannot see it. Dispatch isolation "
+              "from JOE's side is step 16."),
     )
 
 
@@ -1145,29 +1252,92 @@ def step_22_reasoning(proof: Proof, service) -> None:
     )
 
 
+class _DraftStub:
+    """A provider that answers, so the labelling path can be exercised.
+
+    The suite isolates runtime_data, so no reasoning provider is ever signed
+    in and a real draft request refuses. This supplies the one thing missing -
+    a successful answer - and nothing else. The label is applied by JOE after
+    the provider returns, so every line of code this step checks is JOE's own
+    and runs unchanged."""
+
+    def status(self) -> dict:
+        return {"status": "REASONING LIVE", "live": True, "available": True,
+                "provider": "stub", "model": "stub", "label": "STUB",
+                "credential_required": False, "credential_present": True,
+                "blocker": ""}
+
+    def draft(self, instruction, context="", sources=None):
+        from adapters.reasoning_provider import Answer, ReasoningStatus
+
+        return Answer(text="Confirming the pickup window for load 4412.",
+                      ok=True, task="draft", provider="stub", model="stub",
+                      status=ReasoningStatus.LIVE)
+
+
 def step_23_no_send(proof: Proof, service) -> None:
-    """Drafting is never sending."""
+    """Drafting is never sending - checked on a draft, not in a source file.
+
+    This step used to establish its labelling by reading
+    reasoning_capabilities.py as text and looking for the strings "DRAFT ONLY"
+    and "NOT SENT". That proved two strings existed in a file. It returned the
+    same verdict against the real module and against a one-line comment
+    containing both phrases, so every piece of labelling logic could have been
+    deleted and this would still have reported PASS.
+
+    Two of its other evidence lines were also claims nobody checked: "mail
+    libraries none imported" and "outlook writes 0" were printed as facts and
+    tested nowhere - and status_dict already carried a real operational_writes
+    counter that this step ignored.
+    """
+    import re as _re
+
     missing = [
         name
         for holder in (service, service.outlook, service.dispatch)
         for name in ("send", "send_email", "reply", "forward", "transmit")
         if hasattr(holder, name)
     ]
-    source = (PLUGIN_ROOT / "app" / "reasoning_capabilities.py").read_text(
-        encoding="utf-8"
-    )
-    labelled = "DRAFT ONLY" in source and "NOT SENT" in source
+
+    # The label, on an actual draft.
+    original = service.reasoning
+    try:
+        service.reasoning = _DraftStub()
+        drafted = service.ask("Draft a note to the broker about load 4412").response
+    finally:
+        service.reasoning = original
+
+    shown = ((drafted.written or "") + " " + (drafted.answer or "")
+             + " " + " ".join(drafted.notices)).upper()
+    labelled = drafted.ok and "DRAFT ONLY" in shown and "NOT SENT" in shown
+
+    # No transport library anywhere in the plugin. Checked, not claimed.
+    importers = [path.name for path, text in _plugin_sources(
+        "app", "adapters", "ui", "memory", "library", "research", "voice",
+        "outlook", "contracts", "governance")
+        if _re.search(r"^\s*(import|from)\s+(smtplib|imaplib|email)\b",
+                      text, _re.MULTILINE)]
+
     data = service.status_dict()
+    writes = int(data.get("operational_writes", 0))
+
     proof.record(
         23,
         "Drafting is marked DRAFT ONLY / NOT SENT, and nothing can send",
-        not missing and labelled and data["messages_sent"] == 0,
+        (not missing) and labelled and (not importers)
+        and data["messages_sent"] == 0 and writes == 0,
         [
             "send methods        " + (", ".join(missing) if missing else "none exist"),
-            "draft labelling     DRAFT ONLY / NOT SENT present in the capability",
+            "draft produced      " + str(drafted.ok) + ", "
+            + str(len(drafted.written)) + " characters",
+            "DRAFT ONLY shown    " + str("DRAFT ONLY" in shown),
+            "NOT SENT shown      " + str("NOT SENT" in shown),
+            "first line          " + (drafted.written or "").splitlines()[0][:60],
+            "mail libraries      " + (", ".join(importers) if importers
+                                      else "none imported (smtplib, imaplib, "
+                                           "email - searched)"),
             "messages sent       " + str(data["messages_sent"]),
-            "mail libraries      none imported (no smtplib, imaplib, email)",
-            "outlook writes      0",
+            "operational writes  " + str(writes),
         ],
     )
 
