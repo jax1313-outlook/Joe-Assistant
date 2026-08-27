@@ -7,8 +7,6 @@
 
 ---
 
----
-
 ## Status: closed
 
 All seven items were corrected on the day of the audit, each verified by
