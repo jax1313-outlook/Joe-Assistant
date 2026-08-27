@@ -6,6 +6,13 @@
 **Proposed version:** 2.0 (a rule is added — Governance 6.3)
 **Drafted:** 27 August 2026
 **Status:** **PROPOSED. NOT IN FORCE.**
+
+> **27 August 2026.** Mike signed a Transmission Authority amendment whose
+> text differs from this draft - see `AMENDMENT_1_TRANSMISSION_SIGNED.md`.
+> Whether the six conditions below govern transmissions under that
+> signature, or are replaced by it, is an open question recorded in
+> section 4 of that document and awaiting Mike's ruling. This draft is
+> left unaltered until he decides.
 Only Mike Zachary may amend this document set (Governance 6.1), and an
 amendment is made in writing, not in conversation (Governance 6.2). Nothing
 below binds anything until he signs it.
