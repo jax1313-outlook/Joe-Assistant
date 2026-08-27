@@ -2202,10 +2202,30 @@ class TestTokenCacheOnDisk(unittest.TestCase):
         )
 
     def test_no_token_material_appears_in_clear(self):
+        # b'{"' used to be in this list and had to come out. It is TWO bytes,
+        # and this blob is 10 KB of near-perfect entropy (7.979 of 8.0), so a
+        # given 2-byte pair appears by chance about 14.6% of the time. It duly
+        # did - one occurrence, while every meaningful marker was zero - and
+        # failed a correctly encrypted cache. A check that cries wolf one run in
+        # seven teaches people to ignore it.
+        #
+        # It is replaced by longer markers, not dropped. These are the actual
+        # top-level keys MSAL writes, so a cache in clear still fails - and
+        # none of them can appear by chance.
         for marker in (b"access_token", b"refresh_token", b"id_token",
-                       b"Bearer", b"eyJ", b'{"'):
+                       b"Bearer", b"eyJ",
+                       b'"AccessToken"', b'"RefreshToken"', b'"IdToken"',
+                       b'"Account"', b'"AppMetadata"'):
             with self.subTest(marker=marker.decode("latin1")):
                 self.assertNotIn(marker, self.blob)
+
+    def test_the_cache_is_not_json_at_all(self):
+        """A cache written in clear would be JSON from its first byte.
+
+        This is what b'{"' was reaching for, done structurally instead of by
+        chance: position 0 cannot collide with random noise."""
+        self.assertFalse(self.blob.lstrip()[:1] == b"{",
+                         "token cache begins as JSON - it is not encrypted")
 
     def test_the_cache_does_not_leak_the_account(self):
         self.assertNotIn(b"l1truck", self.blob.lower())
@@ -3275,6 +3295,174 @@ class TestTruthClasses(unittest.TestCase):
             "See the [FMCSA hours rule](https://fmcsa.dot.gov/hos) for detail.")
         self.assertEqual(spoken, "See the FMCSA hours rule for detail.")
         self.assertNotIn("http", spoken)
+
+
+class TestTransmissionIsInert(unittest.TestCase):
+    """Amendment 1, signed 27 August 2026, conditions ruled binding the same day.
+
+    The staged envelope is the easy half. These tests are mostly about the
+    refusals, because the refusals are the amendment.
+    """
+
+    def _staged(self, **overrides):
+        from app.transmission import BindingFact, stage
+        kwargs = dict(
+            mailbox="ops@l1truck.com",
+            recipients=("dispatch@examplebroker.com",),
+            subject="Load 4412 - revised rate confirmation",
+            body="Revised packet attached.",
+            facts=(
+                BindingFact("Load", "4412", "DISPATCH"),
+                BindingFact("Rate changed from", "1.95 to 2.10", "MIKE"),
+            ),
+            attachments=("rate_con_4412_rev1.pdf",),
+        )
+        kwargs.update(overrides)
+        return stage(**kwargs)
+
+    # ---- the gate ------------------------------------------------------
+
+    def test_transmission_is_not_armed_and_says_why(self):
+        from app.transmission import arming_state
+        gate = arming_state(config={"outlook": {"read_only": True}})
+        self.assertFalse(gate["armed"])
+        self.assertTrue(gate["blockers"], "not armed must come with reasons")
+        joined = " ".join(gate["blockers"]).lower()
+        self.assertIn("no transport exists", joined)
+
+    def test_transmit_never_sends_even_when_approved(self):
+        """The whole point. Approval is not transmission."""
+        from app.transmission import State, approve, read_back, transmit
+        t = self._staged()
+        read_back(t)
+        approve(t, "send", confidence=1.0)
+        self.assertEqual(t.state, State.APPROVED)
+
+        result = transmit(t, config={"outlook": {"read_only": True}})
+        self.assertFalse(result["sent"])
+        self.assertNotEqual(t.state, State.TRANSMITTED)
+        self.assertTrue(result["blockers"])
+
+    # ---- 2.3.3 nothing JOE supplied ------------------------------------
+
+    def test_a_value_joe_originated_cannot_be_staged(self):
+        from app.transmission import BindingFact, TransmissionError
+        with self.assertRaises(TransmissionError) as caught:
+            self._staged(facts=(BindingFact("Rate", "2.10", "JOE"),))
+        self.assertIn("2.3.3", str(caught.exception))
+
+    # ---- 2.3.2 read-back before approval -------------------------------
+
+    def test_approval_without_a_readback_is_refused(self):
+        from app.transmission import State, approve
+        t = self._staged()
+        approve(t, "send", confidence=1.0)
+        self.assertEqual(t.state, State.REFUSED)
+        self.assertIn("2.3.2", t.refusal)
+
+    def test_a_stale_readback_must_be_read_again(self):
+        from datetime import datetime, timedelta, timezone
+        from app.transmission import (READBACK_VALID_SECONDS, State, approve,
+                                      read_back)
+        t = self._staged()
+        read_back(t)
+        later = (datetime.now(timezone.utc)
+                 + timedelta(seconds=READBACK_VALID_SECONDS + 5))
+        approve(t, "send", confidence=1.0, now=later)
+        self.assertEqual(t.state, State.EXPIRED)
+
+    def test_the_readback_says_the_things_that_matter(self):
+        from app.transmission import read_back
+        spoken = read_back(self._staged())
+        for expected in ("dispatch@examplebroker.com", "ops@l1truck.com",
+                         "4412", "1.95 to 2.10", "rate_con_4412_rev1.pdf"):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, spoken)
+
+    # ---- 2.3.6 an unheard command is not a command ---------------------
+
+    def test_a_half_heard_approval_is_not_an_approval(self):
+        from app.transmission import State, approve, read_back
+        t = self._staged()
+        read_back(t)
+        approve(t, "send", confidence=0.4)
+        self.assertEqual(t.state, State.REFUSED)
+        self.assertIn("2.3.6", t.refusal)
+
+    def test_a_refusal_containing_the_word_send_is_not_an_approval(self):
+        """The failure that would matter on a voice channel."""
+        from app.transmission import is_approval
+        for said in ("no, don't send that", "do not send", "stop, cancel send",
+                     "I wouldn't send it", "hold off, don't send"):
+            with self.subTest(said=said):
+                self.assertFalse(is_approval(said))
+        for said in ("send", "Send it now", "looks good, send", "approved, send",
+                     "transmit"):
+            with self.subTest(said=said):
+                self.assertTrue(is_approval(said))
+
+    # ---- 2.3.4 withdrawal ----------------------------------------------
+
+    def test_an_approved_transmission_can_still_be_withdrawn(self):
+        from app.transmission import State, approve, read_back, withdraw
+        t = self._staged()
+        read_back(t)
+        approve(t, "send", confidence=1.0)
+        withdraw(t)
+        self.assertEqual(t.state, State.WITHDRAWN)
+
+    def test_approving_a_withdrawn_transmission_does_nothing(self):
+        from app.transmission import State, approve, read_back, withdraw
+        t = self._staged()
+        read_back(t)
+        withdraw(t)
+        approve(t, "send", confidence=1.0)
+        self.assertEqual(t.state, State.WITHDRAWN)
+
+    # ---- 2.3.5 Dispatch owns the record --------------------------------
+
+    def test_the_record_never_claims_to_be_authoritative(self):
+        from app.transmission import provisional_record
+        record = provisional_record(self._staged(), sent=False)
+        self.assertFalse(record["authoritative"])
+        self.assertEqual(record["owner"], "Dispatch")
+        self.assertIn("PROVISIONAL", record["note"])
+
+    def test_the_record_never_says_something_was_sent_when_it_was_not(self):
+        from app.transmission import approve, read_back, transmit
+        t = self._staged()
+        read_back(t)
+        approve(t, "send", confidence=1.0)
+        result = transmit(t, config={"outlook": {"read_only": True}})
+        self.assertFalse(result["record"]["sent"])
+
+    # ---- Amendment 1 approved mailboxes --------------------------------
+
+    def test_only_the_two_approved_mailboxes_may_send(self):
+        from app.mailbox_authority import is_approved_sender
+        for good in ("ops@l1truck.com", "Ops@L1Truck.com", "admin@l1truck.com"):
+            with self.subTest(mailbox=good):
+                self.assertTrue(is_approved_sender(good))
+        for bad in ("jax1313@outlook.com", "system@l1truck.com",
+                    "someone@elsewhere.com", ""):
+            with self.subTest(mailbox=bad):
+                self.assertFalse(is_approved_sender(bad))
+
+    def test_staging_from_an_unapproved_mailbox_is_refused(self):
+        from app.transmission import TransmissionError
+        with self.assertRaises(TransmissionError):
+            self._staged(mailbox="jax1313@outlook.com")
+
+    def test_the_personal_account_refusal_names_the_authority(self):
+        from app.mailbox_authority import refusal_for
+        said = refusal_for("jax1313@outlook.com")
+        self.assertIn("personal", said.lower())
+        self.assertIn("Amendment 1", said)
+
+    def test_a_transmission_needs_a_recipient(self):
+        from app.transmission import TransmissionError
+        with self.assertRaises(TransmissionError):
+            self._staged(recipients=())
 
 
 if __name__ == "__main__":

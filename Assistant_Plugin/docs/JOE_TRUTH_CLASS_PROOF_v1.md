@@ -48,7 +48,7 @@ half varies, which is what doctrine section 42 requires
 ```
 asked               What is the driving distance between Jacksonville Florida and Atlanta Georgia?
 capability          ANSWER
-spoken              The driving distance between Jacksonville, Florida and Atlanta, Georgia is roughly 345 to 365 miles (555 to 587 km), depending on the exact start and destination points and the rou
+spoken              The driving distance from Jacksonville, Florida to Atlanta, Georgia is typically about 345 to 365 miles (555 to 587 km) depending on the exact starting point, destination, and rout
 refused for context False
 carries a distance  True
 
@@ -73,7 +73,7 @@ form is not required to carry a repetitive disclaimer
 asked               What is the I-75 exit number for the first Love's in Florida?
 capability          RESEARCH
 routed to Research  True
-spoken              If you're coming south from Georgia into Florida on I-75, the first Love's shown on current travel-stop listings is at Exit 451 in Jasper, Florida.
+spoken              If you're coming southbound from Georgia into Florida on I‑75, the first Love's shown by current I‑75 Florida exit listings is at Exit 451 in Jasper, Florida.
 sources returned    6
     Loves along I-75 exits in Florida | iExit Interstate Exit Guide  https://www.iexitapp.com/exits/Florida/I-75/South/577/Loves/81
     Loves Travel Stop Florida FL Locations - Allstays  https://www.allstays.com/c/loves-florida-locations.htm
@@ -100,7 +100,7 @@ the citations from step 5 remain in the written record
 ```
 asked                  What is our detention rate?
 classified as          COMPANY
-spoken                 No answer is available in the supplied context.
+spoken                 The supplied context does not state a detention rate for Level 1 Transport.
 quoted a detention rate       False
 substituted industry practice False
 admits the record is silent   True  (reported, not required - phrasing varies)
@@ -129,7 +129,7 @@ provider calls made        1
 calls carrying company context   1
 calls with the context stripped  0
 calls under any other class      0
-spoken                     No detention rate is provided in the supplied context.
+spoken                     The supplied context does not define a detention rate for Level 1 Transport.
 
 a stripped-context retry here would answer a Level 1 question from
 general knowledge - doctrine section 11.5
