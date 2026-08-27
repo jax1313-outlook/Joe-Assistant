@@ -1,0 +1,46 @@
+[
+  {
+    "message_id": "MSG-001",
+    "subject": "Load 123 - please confirm the rate",
+    "sender": "j.reed@example.invalid",
+    "to": ["mike@example.invalid"],
+    "received": "2026-08-24T15:10:00Z",
+    "is_read": false,
+    "importance": "high",
+    "has_attachments": true,
+    "body_preview": "We need your confirmation on the adjusted rate before we can tender."
+  },
+  {
+    "message_id": "MSG-002",
+    "subject": "Weekly settlement summary",
+    "sender": "billing@example.invalid",
+    "to": ["mike@example.invalid"],
+    "received": "2026-08-23T20:00:00Z",
+    "is_read": true,
+    "importance": "normal",
+    "has_attachments": true,
+    "body_preview": "Attached is the weekly settlement summary. No action needed."
+  },
+  {
+    "message_id": "MSG-003",
+    "subject": "Appointment window for Richmond",
+    "sender": "scheduling@example.invalid",
+    "to": ["mike@example.invalid"],
+    "received": "2026-08-24T11:45:00Z",
+    "is_read": false,
+    "importance": "normal",
+    "has_attachments": false,
+    "body_preview": "Please advise whether the stated window works so we can confirm it."
+  },
+  {
+    "message_id": "MSG-004",
+    "subject": "Fuel card statement available",
+    "sender": "noreply@example.invalid",
+    "to": ["mike@example.invalid"],
+    "received": "2026-08-01T06:00:00Z",
+    "is_read": true,
+    "importance": "normal",
+    "has_attachments": false,
+    "body_preview": "Your monthly statement is ready to view."
+  }
+]

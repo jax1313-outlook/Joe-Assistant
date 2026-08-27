@@ -1,0 +1,16 @@
+{
+  "record_id": "MEM-20260825-011407-F8690A",
+  "created_at": "2026-08-25T01:14:07.795834Z",
+  "expires_at": null,
+  "updated_at": "2026-08-25T01:14:08.069801Z",
+  "state": "DELETED",
+  "interaction_level": "LEVEL_1",
+  "source_channel": "local",
+  "driver_request": null,
+  "assistant_response": null,
+  "related_load": null,
+  "related_mission": null,
+  "destination": null,
+  "citations": [],
+  "deletion_reason": "driver asked to forget it"
+}

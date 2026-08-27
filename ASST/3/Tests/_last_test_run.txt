@@ -1,0 +1,59 @@
+test_default_root_is_the_corpus_in_this_folder (test_assistant_library.TestBoundaries.test_default_root_is_the_corpus_in_this_folder) ... ok
+test_imports_no_network_email_or_vendor_module (test_assistant_library.TestBoundaries.test_imports_no_network_email_or_vendor_module) ... ok
+test_imports_nothing_from_another_workstream (test_assistant_library.TestBoundaries.test_imports_nothing_from_another_workstream) ... ok
+test_indexing_the_corpus_changes_nothing_on_disk (test_assistant_library.TestBoundaries.test_indexing_the_corpus_changes_nothing_on_disk) ... ok
+test_library_object_exposes_no_mutating_method (test_assistant_library.TestBoundaries.test_library_object_exposes_no_mutating_method) ... ok
+test_no_memory_outlook_or_voice_capability (test_assistant_library.TestBoundaries.test_no_memory_outlook_or_voice_capability)
+Check what the package defines, not what its prose mentions. ... ok
+test_no_write_call_exists_anywhere_in_the_package (test_assistant_library.TestBoundaries.test_no_write_call_exists_anywhere_in_the_package) ... ok
+test_uses_only_the_standard_library (test_assistant_library.TestBoundaries.test_uses_only_the_standard_library) ... ok
+test_zipfile_is_opened_read_only (test_assistant_library.TestBoundaries.test_zipfile_is_opened_read_only) ... ok
+test_corpus_indexes (test_assistant_library.TestCorpusIndexing.test_corpus_indexes) ... ok
+test_doc_ids_are_unique_and_stable (test_assistant_library.TestCorpusIndexing.test_doc_ids_are_unique_and_stable) ... ok
+test_documents_carry_size_and_modified_time (test_assistant_library.TestCorpusIndexing.test_documents_carry_size_and_modified_time) ... ok
+test_markdown_title_comes_from_the_heading (test_assistant_library.TestCorpusIndexing.test_markdown_title_comes_from_the_heading) ... ok
+test_missing_root_raises (test_assistant_library.TestCorpusIndexing.test_missing_root_raises) ... ok
+test_relative_paths_use_forward_slashes (test_assistant_library.TestCorpusIndexing.test_relative_paths_use_forward_slashes) ... ok
+test_report_records_what_happened (test_assistant_library.TestCorpusIndexing.test_report_records_what_happened) ... ok
+test_root_that_is_a_file_raises (test_assistant_library.TestCorpusIndexing.test_root_that_is_a_file_raises) ... ok
+test_word_and_line_counts (test_assistant_library.TestCorpusIndexing.test_word_and_line_counts) ... ok
+test_corrupt_docx_is_reported_not_crashed (test_assistant_library.TestDocumentReading.test_corrupt_docx_is_reported_not_crashed) ... ok
+test_doc_id_is_derived_from_the_path (test_assistant_library.TestDocumentReading.test_doc_id_is_derived_from_the_path) ... ok
+test_every_supported_extension_is_readable (test_assistant_library.TestDocumentReading.test_every_supported_extension_is_readable) ... ok
+test_reads_docx_without_office (test_assistant_library.TestDocumentReading.test_reads_docx_without_office) ... ok
+test_reads_plain_text (test_assistant_library.TestDocumentReading.test_reads_plain_text) ... ok
+test_skips_noise_directories (test_assistant_library.TestDocumentReading.test_skips_noise_directories) ... ok
+test_title_falls_back_to_the_file_name (test_assistant_library.TestDocumentReading.test_title_falls_back_to_the_file_name) ... ok
+test_unreadable_document_is_skipped_and_reported (test_assistant_library.TestDocumentReading.test_unreadable_document_is_skipped_and_reported) ... ok
+test_unsupported_extension_is_refused (test_assistant_library.TestDocumentReading.test_unsupported_extension_is_refused) ... ok
+test_unsupported_files_are_counted (test_assistant_library.TestDocumentReading.test_unsupported_files_are_counted) ... ok
+test_find_by_unknown_path_raises (test_assistant_library.TestRetrieveAndReference.test_find_by_unknown_path_raises) ... ok
+test_get_returns_the_full_document (test_assistant_library.TestRetrieveAndReference.test_get_returns_the_full_document) ... ok
+test_get_unknown_document_raises (test_assistant_library.TestRetrieveAndReference.test_get_unknown_document_raises) ... ok
+test_has_reports_membership (test_assistant_library.TestRetrieveAndReference.test_has_reports_membership) ... ok
+test_reference_names_title_path_and_date (test_assistant_library.TestRetrieveAndReference.test_reference_names_title_path_and_date) ... ok
+test_references_handles_a_list (test_assistant_library.TestRetrieveAndReference.test_references_handles_a_list) ... ok
+test_to_dict_excludes_text_unless_asked (test_assistant_library.TestRetrieveAndReference.test_to_dict_excludes_text_unless_asked) ... ok
+test_an_all_stopword_query_still_searches (test_assistant_library.TestSearch.test_an_all_stopword_query_still_searches) ... ok
+test_empty_query_returns_nothing (test_assistant_library.TestSearch.test_empty_query_returns_nothing) ... ok
+test_every_hit_carries_a_reference (test_assistant_library.TestSearch.test_every_hit_carries_a_reference) ... ok
+test_finds_a_document_by_body_terms (test_assistant_library.TestSearch.test_finds_a_document_by_body_terms) ... ok
+test_finds_a_document_by_title_terms (test_assistant_library.TestSearch.test_finds_a_document_by_title_terms) ... ok
+test_hits_report_matched_and_missing_terms (test_assistant_library.TestSearch.test_hits_report_matched_and_missing_terms) ... ok
+test_limit_is_respected (test_assistant_library.TestSearch.test_limit_is_respected) ... ok
+test_no_match_returns_nothing_rather_than_guessing (test_assistant_library.TestSearch.test_no_match_returns_nothing_rather_than_guessing) ... ok
+test_ordering_is_stable_across_runs (test_assistant_library.TestSearch.test_ordering_is_stable_across_runs) ... ok
+test_require_all_drops_partial_matches (test_assistant_library.TestSearch.test_require_all_drops_partial_matches) ... ok
+test_results_carry_snippets (test_assistant_library.TestSearch.test_results_carry_snippets) ... ok
+test_score_formula_is_title_times_five_plus_body (test_assistant_library.TestSearch.test_score_formula_is_title_times_five_plus_body) ... ok
+test_search_is_case_insensitive (test_assistant_library.TestSearch.test_search_is_case_insensitive) ... ok
+test_search_over_an_empty_library (test_assistant_library.TestSearch.test_search_over_an_empty_library) ... ok
+test_stopword_list_is_small_and_visible (test_assistant_library.TestSearch.test_stopword_list_is_small_and_visible) ... ok
+test_stopwords_are_dropped_from_a_mixed_query (test_assistant_library.TestSearch.test_stopwords_are_dropped_from_a_mixed_query) ... ok
+test_title_matches_outrank_body_matches (test_assistant_library.TestSearch.test_title_matches_outrank_body_matches) ... ok
+test_tokenizer_keeps_hyphens_and_apostrophes (test_assistant_library.TestSearch.test_tokenizer_keeps_hyphens_and_apostrophes) ... ok
+
+----------------------------------------------------------------------
+Ran 53 tests in 0.402s
+
+OK

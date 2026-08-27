@@ -1,0 +1,30 @@
+[
+  {
+    "source_id": "SRC-101",
+    "title": "Rate Floor Policy",
+    "kind": "company",
+    "origin": "Company Library",
+    "retrieved_at": "2026-08-20T10:00:00Z",
+    "claims": [
+      {
+        "topic": "a rate under the floor should be passed or countered",
+        "statement": "A rate under the floor is a pass or a counter, not a negotiation to win.",
+        "supports": true
+      }
+    ]
+  },
+  {
+    "source_id": "SRC-102",
+    "title": "Broker conversation, 24 Aug",
+    "kind": "personal",
+    "origin": "Stated by broker on a call",
+    "retrieved_at": "2026-08-24T15:00:00Z",
+    "claims": [
+      {
+        "topic": "a rate under the floor should be passed or countered",
+        "statement": "Broker stated the market will not support the floor this week.",
+        "supports": false
+      }
+    ]
+  }
+]

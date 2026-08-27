@@ -1,0 +1,35 @@
+{
+  "sandbox_id": "SBX-20260824-204540-81706F",
+  "created_at": "2026-08-24T20:45:40.775787Z",
+  "expires_at": null,
+  "updated_at": "2026-08-24T20:45:40.783502Z",
+  "state": "FORMAL",
+  "interaction_level": "LEVEL_3",
+  "source_channel": "local_cli",
+  "driver_request": "Look at running a dedicated northbound lane.",
+  "assistant_response": "Comparison of three options with current public rate data.",
+  "research_scope": "Northbound dedicated lane, public rate sources",
+  "sources_consulted": [
+    "public rate index",
+    "internal lane history"
+  ],
+  "key_findings": [
+    "Two of three options clear the recorded floor."
+  ],
+  "operational_consequences": [],
+  "uncertainty": null,
+  "assistant_recommendation": null,
+  "driver_decision": null,
+  "drafts_created": [],
+  "actions_completed": [],
+  "actions_awaiting_approval": [],
+  "related_load": null,
+  "related_mission": null,
+  "related_customer": null,
+  "related_broker": null,
+  "destination": "Ideas",
+  "citations": [
+    "https://example.invalid/rate-index"
+  ],
+  "deletion_reason": null
+}

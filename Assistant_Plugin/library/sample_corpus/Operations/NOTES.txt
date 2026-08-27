@@ -1,0 +1,7 @@
+Operational notes - sample plain text document.
+
+Scale locations along the northbound corridor vary by time of day.
+Deadhead over 80 miles usually cancels the advantage of a higher rate.
+Detention starts at the appointment window, not at arrival.
+
+This is sample material written for JOE Library workstream.

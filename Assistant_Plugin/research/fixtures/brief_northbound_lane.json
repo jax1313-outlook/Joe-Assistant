@@ -1,0 +1,67 @@
+{
+  "question": "Is a dedicated northbound lane worth running?",
+  "scope": "Supplied rate history and two public rate references. Fuel not modelled.",
+  "sources": [
+    {
+      "source_id": "SRC-001",
+      "title": "Rate Floor Policy",
+      "kind": "company",
+      "origin": "Company Library",
+      "retrieved_at": "2026-08-20T10:00:00Z",
+      "claims": [
+        {
+          "topic": "lane clears the recorded floor",
+          "statement": "The recorded floor for this lane is 2.35 per mile.",
+          "supports": true
+        }
+      ]
+    },
+    {
+      "source_id": "SRC-002",
+      "title": "Internal lane history, last 12 weeks",
+      "kind": "operational",
+      "origin": "Load records",
+      "retrieved_at": "2026-08-22T09:00:00Z",
+      "claims": [
+        {
+          "topic": "lane clears the recorded floor",
+          "statement": "Twelve-week average on this lane was 2.48 per mile.",
+          "supports": true
+        },
+        {
+          "topic": "volume is steady enough to dedicate",
+          "statement": "Loads were available in 11 of the last 12 weeks.",
+          "supports": true
+        }
+      ]
+    },
+    {
+      "source_id": "SRC-003",
+      "title": "Public rate index, northbound corridor",
+      "kind": "public",
+      "origin": "https://example.invalid/rate-index",
+      "retrieved_at": "2026-08-23T14:30:00Z",
+      "claims": [
+        {
+          "topic": "volume is steady enough to dedicate",
+          "statement": "Corridor volume declined 9 percent quarter over quarter.",
+          "supports": false
+        },
+        {
+          "topic": "deadhead is acceptable",
+          "statement": "Typical repositioning on this corridor is under 60 miles.",
+          "supports": true
+        }
+      ]
+    }
+  ],
+  "recommendation": {
+    "statement": "Worth running as a trial rather than a dedicated commitment. Consider four weeks, then review.",
+    "rationale": "The lane clears the recorded floor on two sources, but volume is contested and rests on a single public index that disagrees with our own records.",
+    "rests_on": ["SRC-001", "SRC-002", "SRC-003"],
+    "open_questions": [
+      "Does the public index cover the same corridor segment as our load records?",
+      "What does fuel do to the 2.48 average? Fuel was not modelled."
+    ]
+  }
+}

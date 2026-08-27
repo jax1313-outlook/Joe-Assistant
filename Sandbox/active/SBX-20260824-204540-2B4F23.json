@@ -1,0 +1,32 @@
+{
+  "sandbox_id": "SBX-20260824-204540-2B4F23",
+  "created_at": "2026-08-24T20:45:40.707990Z",
+  "expires_at": null,
+  "updated_at": "2026-08-24T20:45:40.714747Z",
+  "state": "SAVED",
+  "interaction_level": "LEVEL_2",
+  "source_channel": "local_cli",
+  "driver_request": "Broker offered 2.10 a mile on the Charlotte run.",
+  "assistant_response": "Below your recorded floor for that lane.",
+  "research_scope": null,
+  "sources_consulted": [],
+  "key_findings": [
+    "Offer is under the recorded lane floor."
+  ],
+  "operational_consequences": [
+    "Accepting would reduce the week's average."
+  ],
+  "uncertainty": null,
+  "assistant_recommendation": "Counter or pass. Mike decides.",
+  "driver_decision": null,
+  "drafts_created": [],
+  "actions_completed": [],
+  "actions_awaiting_approval": [],
+  "related_load": null,
+  "related_mission": null,
+  "related_customer": null,
+  "related_broker": null,
+  "destination": null,
+  "citations": [],
+  "deletion_reason": null
+}

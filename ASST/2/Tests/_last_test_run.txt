@@ -1,0 +1,50 @@
+test_engine_exposes_no_routing_or_sending_operation (test_assistant_memory.TestBoundaries.test_engine_exposes_no_routing_or_sending_operation) ... ok
+test_expired_records_are_never_promoted (test_assistant_memory.TestBoundaries.test_expired_records_are_never_promoted) ... ok
+test_imports_no_network_email_printing_or_vendor_module (test_assistant_memory.TestBoundaries.test_imports_no_network_email_printing_or_vendor_module) ... ok
+test_imports_nothing_from_another_workstream (test_assistant_memory.TestBoundaries.test_imports_nothing_from_another_workstream) ... ok
+test_unknown_operation_is_refused (test_assistant_memory.TestBoundaries.test_unknown_operation_is_refused) ... ok
+test_uses_only_the_standard_library (test_assistant_memory.TestBoundaries.test_uses_only_the_standard_library) ... ok
+test_all_required_fields_present (test_assistant_memory.TestCreation.test_all_required_fields_present) ... ok
+test_default_retention_is_three_hours (test_assistant_memory.TestCreation.test_default_retention_is_three_hours) ... ok
+test_ids_are_unique (test_assistant_memory.TestCreation.test_ids_are_unique) ... ok
+test_new_record_is_temporary_level_1 (test_assistant_memory.TestCreation.test_new_record_is_temporary_level_1) ... ok
+test_record_lands_inside_the_folder (test_assistant_memory.TestCreation.test_record_lands_inside_the_folder) ... ok
+test_serialization_round_trip (test_assistant_memory.TestCreation.test_serialization_round_trip) ... ok
+test_delete_purges_content_and_records_the_reason (test_assistant_memory.TestDelete.test_delete_purges_content_and_records_the_reason) ... ok
+test_delete_sets_the_state (test_assistant_memory.TestDelete.test_delete_sets_the_state) ... ok
+test_deleted_record_leaves_the_active_set (test_assistant_memory.TestDelete.test_deleted_record_leaves_the_active_set) ... ok
+test_no_operation_is_accepted_after_deletion (test_assistant_memory.TestDelete.test_no_operation_is_accepted_after_deletion) ... ok
+test_does_not_expire_before_three_hours (test_assistant_memory.TestExpiration.test_does_not_expire_before_three_hours) ... ok
+test_expired_content_is_purged_and_not_promoted (test_assistant_memory.TestExpiration.test_expired_content_is_purged_and_not_promoted) ... ok
+test_expired_is_absent_from_the_active_set (test_assistant_memory.TestExpiration.test_expired_is_absent_from_the_active_set) ... ok
+test_expires_past_three_hours (test_assistant_memory.TestExpiration.test_expires_past_three_hours) ... ok
+test_list_active_sweeps_first (test_assistant_memory.TestExpiration.test_list_active_sweeps_first) ... ok
+test_operations_are_refused_on_an_expired_record (test_assistant_memory.TestExpiration.test_operations_are_refused_on_an_expired_record) ... ok
+test_sweep_is_idempotent (test_assistant_memory.TestExpiration.test_sweep_is_idempotent) ... ok
+test_level_1_keeps_the_record_temporary (test_assistant_memory.TestLevel1.test_level_1_keeps_the_record_temporary) ... ok
+test_level_1_resets_the_window (test_assistant_memory.TestLevel1.test_level_1_resets_the_window) ... ok
+test_level_1_will_not_downgrade_a_preserved_record (test_assistant_memory.TestLevel1.test_level_1_will_not_downgrade_a_preserved_record) ... ok
+test_level_2_saves_and_raises_the_level (test_assistant_memory.TestLevel2.test_level_2_saves_and_raises_the_level) ... ok
+test_level_2_stops_expiration (test_assistant_memory.TestLevel2.test_level_2_stops_expiration) ... ok
+test_references_are_preserved (test_assistant_memory.TestLevel2.test_references_are_preserved) ... ok
+test_saved_record_survives_a_ten_hour_sweep (test_assistant_memory.TestLevel2.test_saved_record_survives_a_ten_hour_sweep) ... ok
+test_level_3_from_saved_is_an_upgrade (test_assistant_memory.TestLevel3.test_level_3_from_saved_is_an_upgrade) ... ok
+test_level_3_marks_formal (test_assistant_memory.TestLevel3.test_level_3_marks_formal) ... ok
+test_level_3_preserves_the_destination_and_stops_expiration (test_assistant_memory.TestLevel3.test_level_3_preserves_the_destination_and_stops_expiration) ... ok
+test_level_3_produces_nothing (test_assistant_memory.TestLevel3.test_level_3_produces_nothing) ... ok
+test_print_ready_does_not_change_the_level (test_assistant_memory.TestPrintReady.test_print_ready_does_not_change_the_level) ... ok
+test_print_ready_does_not_downgrade_a_formal_record (test_assistant_memory.TestPrintReady.test_print_ready_does_not_downgrade_a_formal_record) ... ok
+test_print_ready_from_level_2_keeps_level_2 (test_assistant_memory.TestPrintReady.test_print_ready_from_level_2_keeps_level_2) ... ok
+test_print_ready_never_claims_printing (test_assistant_memory.TestPrintReady.test_print_ready_never_claims_printing) ... ok
+test_print_ready_sets_the_state (test_assistant_memory.TestPrintReady.test_print_ready_sets_the_state) ... ok
+test_print_ready_stops_expiration (test_assistant_memory.TestPrintReady.test_print_ready_stops_expiration) ... ok
+test_all_records_stay_inside_the_folder (test_assistant_memory.TestStore.test_all_records_stay_inside_the_folder) ... ok
+test_missing_record_raises (test_assistant_memory.TestStore.test_missing_record_raises) ... ok
+test_moving_buckets_leaves_no_duplicate (test_assistant_memory.TestStore.test_moving_buckets_leaves_no_duplicate) ... ok
+test_refuses_to_write_outside_the_folder (test_assistant_memory.TestStore.test_refuses_to_write_outside_the_folder) ... ok
+test_unknown_state_has_no_bucket (test_assistant_memory.TestStore.test_unknown_state_has_no_bucket) ... ok
+
+----------------------------------------------------------------------
+Ran 45 tests in 4.011s
+
+OK

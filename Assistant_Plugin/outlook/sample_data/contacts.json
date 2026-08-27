@@ -1,0 +1,26 @@
+[
+  {
+    "contact_id": "CON-001",
+    "display_name": "J. Reed",
+    "email": "j.reed@example.invalid",
+    "company": "Sample Brokerage",
+    "phone": "555-0100",
+    "role": "Broker"
+  },
+  {
+    "contact_id": "CON-002",
+    "display_name": "Scheduling Desk",
+    "email": "scheduling@example.invalid",
+    "company": "Sample Receiver",
+    "phone": "555-0111",
+    "role": "Facility scheduling"
+  },
+  {
+    "contact_id": "CON-003",
+    "display_name": "Billing",
+    "email": "billing@example.invalid",
+    "company": "Level 1 Transport",
+    "phone": "555-0122",
+    "role": "Settlement"
+  }
+]

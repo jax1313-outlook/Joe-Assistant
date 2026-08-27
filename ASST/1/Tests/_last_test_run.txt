@@ -1,0 +1,44 @@
+test_every_request_is_marked_not_performed (test_assistant_ui.TestActionLog.test_every_request_is_marked_not_performed) ... ok
+test_filters_by_kind_and_turn (test_assistant_ui.TestActionLog.test_filters_by_kind_and_turn) ... ok
+test_records_a_request_per_press (test_assistant_ui.TestActionLog.test_records_a_request_per_press) ... ok
+test_request_ids_are_sequential (test_assistant_ui.TestActionLog.test_request_ids_are_sequential) ... ok
+test_unknown_action_is_refused (test_assistant_ui.TestActionLog.test_unknown_action_is_refused) ... ok
+test_imports_no_network_email_or_vendor_module (test_assistant_ui.TestBoundaries.test_imports_no_network_email_or_vendor_module) ... ok
+test_imports_nothing_from_another_workstream (test_assistant_ui.TestBoundaries.test_imports_nothing_from_another_workstream) ... ok
+test_no_action_is_ever_marked_performed (test_assistant_ui.TestBoundaries.test_no_action_is_ever_marked_performed) ... ok
+test_the_package_writes_no_files (test_assistant_ui.TestBoundaries.test_the_package_writes_no_files) ... ok
+test_tkinter_layer_imports_and_holds_no_logic (test_assistant_ui.TestBoundaries.test_tkinter_layer_imports_and_holds_no_logic) ... ok
+test_uses_only_the_standard_library (test_assistant_ui.TestBoundaries.test_uses_only_the_standard_library) ... ok
+test_adding_turns_assigns_sequential_ids (test_assistant_ui.TestConversation.test_adding_turns_assigns_sequential_ids) ... ok
+test_blank_text_is_refused (test_assistant_ui.TestConversation.test_blank_text_is_refused) ... ok
+test_created_at_is_utc_iso_with_z (test_assistant_ui.TestConversation.test_created_at_is_utc_iso_with_z) ... ok
+test_history_lines_label_the_speaker (test_assistant_ui.TestConversation.test_history_lines_label_the_speaker) ... ok
+test_new_turn_becomes_selected (test_assistant_ui.TestConversation.test_new_turn_becomes_selected) ... ok
+test_remove_drops_the_turn (test_assistant_ui.TestConversation.test_remove_drops_the_turn) ... ok
+test_removing_the_last_turn_clears_the_selection (test_assistant_ui.TestConversation.test_removing_the_last_turn_clears_the_selection) ... ok
+test_removing_the_selected_turn_moves_the_selection (test_assistant_ui.TestConversation.test_removing_the_selected_turn_moves_the_selection) ... ok
+test_select_unknown_turn_raises (test_assistant_ui.TestConversation.test_select_unknown_turn_raises) ... ok
+test_starts_empty (test_assistant_ui.TestConversation.test_starts_empty) ... ok
+test_text_is_stripped (test_assistant_ui.TestConversation.test_text_is_stripped) ... ok
+test_unknown_speaker_is_refused (test_assistant_ui.TestConversation.test_unknown_speaker_is_refused) ... ok
+test_action_history_is_visible_in_the_view_state (test_assistant_ui.TestViewModel.test_action_history_is_visible_in_the_view_state) ... ok
+test_all_four_buttons_are_present (test_assistant_ui.TestViewModel.test_all_four_buttons_are_present) ... ok
+test_buttons_enable_once_something_is_selected (test_assistant_ui.TestViewModel.test_buttons_enable_once_something_is_selected) ... ok
+test_conversation_history_survives_many_turns (test_assistant_ui.TestViewModel.test_conversation_history_survives_many_turns) ... ok
+test_delete_is_recorded_like_every_other_press (test_assistant_ui.TestViewModel.test_delete_is_recorded_like_every_other_press) ... ok
+test_delete_removes_the_turn_from_the_window (test_assistant_ui.TestViewModel.test_delete_removes_the_turn_from_the_window) ... ok
+test_level_3_records_a_request (test_assistant_ui.TestViewModel.test_level_3_records_a_request) ... ok
+test_opens_with_no_conversation_and_disabled_buttons (test_assistant_ui.TestViewModel.test_opens_with_no_conversation_and_disabled_buttons) ... ok
+test_pressing_with_nothing_selected_is_refused (test_assistant_ui.TestViewModel.test_pressing_with_nothing_selected_is_refused) ... ok
+test_print_never_claims_printing (test_assistant_ui.TestViewModel.test_print_never_claims_printing) ... ok
+test_save_records_a_request_and_changes_nothing_else (test_assistant_ui.TestViewModel.test_save_records_a_request_and_changes_nothing_else) ... ok
+test_selecting_an_unknown_turn_reports_and_changes_nothing (test_assistant_ui.TestViewModel.test_selecting_an_unknown_turn_reports_and_changes_nothing) ... ok
+test_send_adds_the_driver_turn (test_assistant_ui.TestViewModel.test_send_adds_the_driver_turn) ... ok
+test_send_blank_does_nothing (test_assistant_ui.TestViewModel.test_send_blank_does_nothing) ... ok
+test_status_line_reports_the_last_action (test_assistant_ui.TestViewModel.test_status_line_reports_the_last_action) ... ok
+test_view_state_serializes (test_assistant_ui.TestViewModel.test_view_state_serializes) ... ok
+
+----------------------------------------------------------------------
+Ran 39 tests in 0.029s
+
+OK

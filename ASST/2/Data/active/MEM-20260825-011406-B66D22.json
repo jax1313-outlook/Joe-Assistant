@@ -1,0 +1,16 @@
+{
+  "record_id": "MEM-20260825-011406-B66D22",
+  "created_at": "2026-08-25T01:14:06.541535Z",
+  "expires_at": null,
+  "updated_at": "2026-08-25T01:14:06.834059Z",
+  "state": "FORMAL",
+  "interaction_level": "LEVEL_3",
+  "source_channel": "local",
+  "driver_request": "Northbound lane idea",
+  "assistant_response": null,
+  "related_load": null,
+  "related_mission": null,
+  "destination": "Ideas",
+  "citations": [],
+  "deletion_reason": null
+}

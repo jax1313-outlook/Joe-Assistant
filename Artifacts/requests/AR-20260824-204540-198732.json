@@ -1,0 +1,30 @@
+{
+  "artifact_request_id": "AR-20260824-204540-198732",
+  "requested_at": "2026-08-24T20:45:40.783502Z",
+  "sandbox_id": "SBX-20260824-204540-81706F",
+  "artifact_kind": "FORMAL_REPORT",
+  "status": "REQUESTED_NOT_PRODUCED",
+  "produced": false,
+  "physical_print_performed": false,
+  "destination": "Ideas",
+  "related_load": null,
+  "related_mission": null,
+  "related_customer": null,
+  "related_broker": null,
+  "interaction_level": "LEVEL_3",
+  "driver_request": "Look at running a dedicated northbound lane.",
+  "research_scope": "Northbound dedicated lane, public rate sources",
+  "sources_consulted": [
+    "public rate index",
+    "internal lane history"
+  ],
+  "citations": [
+    "https://example.invalid/rate-index"
+  ],
+  "key_findings": [
+    "Two of three options clear the recorded floor."
+  ],
+  "uncertainty": null,
+  "assistant_recommendation": null,
+  "notes": "This is a request only. Sandbox Engine v1 does not produce the finished artifact, does not route it into Dispatch, Company Library, Research Library, or Archive, and does not operate a printer."
+}

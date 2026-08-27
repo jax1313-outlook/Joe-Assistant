@@ -1,0 +1,30 @@
+# ---- Never commit -------------------------------------------------------
+
+# Live runtime state. This holds the DPAPI-encrypted Microsoft 365 token
+# cache (runtime_data/auth/), and memory records carrying real driver
+# requests and assistant responses. Level 1 records are built to expire in
+# three hours; git history does not expire, so they do not belong in it.
+Assistant_Plugin/runtime_data/
+Assistant_Plugin/logs/
+
+# ---- Build and scratch output -------------------------------------------
+
+__pycache__/
+*.pyc
+*.pyo
+
+# Recreated from nothing on every run.
+Assistant_Plugin/proof/_workspace/
+Assistant_Plugin/tests/_workspace/
+ASST/*/Tests/_workspace/
+
+# A packaged duplicate of the plugin source. Keeping both copies in history
+# is how they drift apart; build it from source when a release is needed.
+Assistant_Plugin/Deployment/
+
+# ---- Separately versioned ------------------------------------------------
+
+# Build/Jules is its own repository, with its own remote and branches.
+# Tracking it from here would nest a repo inside a repo. Clone it separately:
+#   https://github.com/jax1313-outlook/Jules.git
+Build/Jules/

@@ -1,0 +1,101 @@
+{
+  "_comment": "JOE configuration. Edit paths here. Nothing is scanned automatically.",
+  "version": "1.0.0",
+  "memory": {
+    "retention_hours": 3,
+    "sweep_on_access": true
+  },
+  "reasoning": {
+    "_comment": "The reasoning provider. 'none' means JOE cannot compose answers and says so. Supported: none, m365_copilot, ollama, openai_compatible. NO CREDENTIAL IS EVER STORED HERE. Microsoft 365 Copilot signs in through MSAL; the token lives in an encrypted Windows cache. tenant_id and client_id are not secrets, but they identify the organisation, so they live in environment variables rather than in this tracked file - see reasoning.copilot below.",
+    "provider": "m365_copilot",
+    "model": "",
+    "endpoint": "",
+    "timeout_seconds": 60,
+    "max_context_chars": 12000,
+    "copilot": {
+      "_comment": "Microsoft 365 Copilot Chat API - PILOT / PREVIEW. Requires a work or school account with a Copilot licence, an Entra app registration, and admin consent on seven delegated Graph scopes. Personal Microsoft accounts are not supported by this API. tenant_id and client_id are deliberately EMPTY here and are read from the environment instead - ASSISTANT_COPILOT_TENANT_ID and ASSISTANT_COPILOT_CLIENT_ID. Neither is a secret, but both identify the organisation's Entra directory, and this file is tracked in git. Setting a value here still works and overrides the environment.",
+      "tenant_id": "",
+      "client_id": "",
+      "time_zone": "America/New_York",
+      "web_enabled_default": false,
+      "timeout_seconds": 120
+    }
+  },
+  "library": {
+    "_comment": "Approved local Library locations, searched in order. Remove an entry to stop searching it. Nothing outside these paths is ever read.",
+    "sources": [
+      {
+        "name": "Company Library",
+        "path": "C:\\Users\\jax13\\OneDrive - Level 1 Transport Inc (1)\\Copilot WorkSpace\\Legacy Dispatch-Level1 Folders\\Company Library",
+        "kind": "company",
+        "enabled": true
+      },
+      {
+        "name": "Sample Corpus",
+        "path": "library\\sample_corpus",
+        "kind": "sample",
+        "enabled": true
+      }
+    ],
+    "max_documents": 2000,
+    "_path_comment": "The Company Library moved into 'Legacy Dispatch-Level1 Folders' during the 2026-08-26 folder reorganisation. The previous path no longer exists, which silently dropped Library from LIVE to SAMPLE and failed proof step 24. If the Library is moved back out of Legacy, update this path."
+  },
+  "outlook": {
+    "_comment": "Read-only. Lazy connect: Outlook is contacted only when you ask. 'account' is the mailbox to read - Ops@l1truck.com is the operating default for Level 1 Transport. Leave it empty to use whatever Outlook treats as its default store instead. Run JOE_ACCOUNTS.cmd to list the mailboxes in the profile. Calendar is read in DATE order for the range you ask about; mail newest-first; contacts alphabetical by the name shown. This setting reads ONE mailbox. Multi-mailbox support is Email Connection Layer v1, which is approved and not yet built.",
+    "enabled": true,
+    "lazy_connect": true,
+    "read_only": true,
+    "max_items": 60,
+    "timeout_seconds": 90,
+    "calendar_window_days": 14,
+    "account": "Ops@l1truck.com",
+    "accounts": [
+      {
+        "id": "ops",
+        "friendly_name": "Operations",
+        "address": "Ops@l1truck.com",
+        "enabled": true
+      },
+      {
+        "id": "admin",
+        "friendly_name": "Administration",
+        "address": "Admin@l1truck.com",
+        "enabled": true
+      }
+    ],
+    "default_mail_source": "ops",
+    "default_calendar_source": "",
+    "default_contacts_source": "",
+    "_accounts_comment": "Approved mailboxes. Read-only - JOE cannot send, delete, move, flag, or modify anything in them. Mail, calendar, and contacts are chosen SEPARATELY because no mailbox is assumed to hold all three: name a connection id in default_mail_source / default_calendar_source / default_contacts_source, or leave one empty to let JOE use the first available mailbox and say which it used. 'account' below is the legacy single-mailbox setting, kept so existing reads keep working."
+  },
+  "research": {
+    "_comment": "Live web-grounded research through Microsoft 365 Copilot. It reuses the reasoning sign-in - no separate credential. Set provider to 'none' or 'fixture' to fall back; fixture output is always labelled SAMPLE DATA and is never presented as live. PILOT / PREVIEW: the Copilot Chat API is a /beta endpoint.",
+    "provider": "m365_copilot",
+    "fixtures_path": "research\\fixtures",
+    "allow_fixture_mode": true
+  },
+  "voice": {
+    "_comment": "Windows System.Speech. speak_replies=false means JOE never speaks unless you press Speak.",
+    "enabled": true,
+    "speak_replies": false,
+    "voice_name": "",
+    "rate": 0,
+    "driver_mode": false,
+    "max_spoken_words": 60,
+    "preferred_microphone": "",
+    "_microphone_comment": "Leave preferred_microphone empty to use the Windows default recording device - that is the normal setting and needs no configuration. JOE records from the Windows default; Windows Speech Recognition offers no way to bind to a chosen device, so a name here is remembered and reported, not enforced. If it does not match the Windows default, JOE says so rather than pretending to have switched."
+  },
+  "dispatch": {
+    "_comment": "No approved Dispatch interface exists on this machine. The port is defined; nothing is connected. Do not point this at Dispatch internals.",
+    "interface": "none",
+    "endpoint": "",
+    "enabled": false
+  },
+  "governance": {
+    "stale_after_minutes": 15
+  },
+  "paths": {
+    "runtime_data": "runtime_data",
+    "logs": "logs"
+  }
+}
