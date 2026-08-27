@@ -21,6 +21,21 @@ line 29). That is why it is bound here by content digest rather than by commit:
 rebuild it from this commit with `Deployment\PACKAGE_JOE.cmd` and the 163 files
 should carry the same digest.
 
+> **Superseded, 27 August 2026.** The figures above are the ones this report's
+> run actually tested and are left unchanged as its record. The package has
+> since been rebuilt twice — for the inert transmission path and for Stage A.
+> Current build, from commit `da6f1bf`:
+>
+> | | |
+> | --- | --- |
+> | package contents | 166 files, 1,688,611 bytes (1.61 MB) |
+> | package digest | `368c2941f1bab118` |
+> | verification | 8 of 8 |
+>
+> Rebuilding from **this** report's commit will not reproduce that digest, and
+> should not. See `ASSISTANT_PLUGIN_CONSTITUTION_v1/COMMUNICATION_OWNERSHIP_AUDIT_v1.md`
+> §A for the Stage A evidence.
+
 ---
 
 ## 1. The defect, in one line
