@@ -109,10 +109,14 @@ def live_test(service, diag) -> dict:
         result["error"] = "no console; nobody present to speak"
         return result
 
-    print("  listening...")
+    print("  connecting to the microphone...")
     result["attempted"] = True
     try:
-        heard = service.listen(8) or {}
+        # Told to speak only once the microphone is genuinely live. A
+        # Bluetooth link takes a moment to come up, and prompting
+        # before it does costs the first word - which is the wake word.
+        heard = service.listen(
+            8, on_ready=lambda: print("  speak now...")) or {}
     except Exception as error:  # noqa: BLE001
         heard = {}
         result["error"] = str(error)

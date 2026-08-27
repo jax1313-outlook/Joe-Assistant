@@ -232,7 +232,7 @@ class SapiVoiceAdapter:
 
     # ---- listening ----------------------------------------------------
 
-    def listen(self, seconds: int = 6) -> dict:
+    def listen(self, seconds: int = 6, on_ready=None) -> dict:
         """Listen at the microphone and return what was recognized.
 
         Requires a person to speak. An automated run cannot prove this, so the
@@ -245,7 +245,12 @@ class SapiVoiceAdapter:
         does that part perfectly well.
         """
         if self.recognizer is not None:
-            return self.recognizer.listen(seconds)
+            try:
+                return self.recognizer.listen(seconds, on_ready=on_ready)
+            except TypeError:
+                # A recognizer that does not take the readiness callback still
+                # works; the caller just prompts a moment early.
+                return self.recognizer.listen(seconds)
 
         probe = self.probe()
         if not probe.get("stt_engine_available"):

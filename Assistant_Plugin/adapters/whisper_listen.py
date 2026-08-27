@@ -45,6 +45,12 @@ DEFAULT_MODEL = "base"
 # int8 keeps a CPU run fast. A GPU machine should use float16.
 DEFAULT_COMPUTE = "int8"
 
+# How long to wait for a microphone link to start carrying audio, and how much
+# longer to let it settle once it does. A wired microphone is ready
+# immediately and costs nothing here; a Bluetooth headset needs both.
+LINK_WARMUP_SECONDS = 2.0
+LINK_SETTLE_SECONDS = 0.25
+
 
 def available() -> tuple[bool, str]:
     """Are both halves installed? Says which is missing, not just 'no'."""
@@ -186,7 +192,7 @@ class WhisperListener:
 
     # ---- listening -----------------------------------------------------
 
-    def listen(self, seconds: int = 6) -> dict:
+    def listen(self, seconds: int = 6, on_ready=None) -> dict:
         """Record for a few seconds and return what was said.
 
         Same shape as the SAPI listener returns, so this drops into the slot
@@ -199,7 +205,7 @@ class WhisperListener:
         if not ok:
             return self._nothing(why, real_audio=False)
 
-        audio, error, used = self._record(seconds)
+        audio, error, used = self._record(seconds, on_ready)
         if error:
             return self._nothing(error, real_audio=False, device=used)
 
@@ -229,7 +235,7 @@ class WhisperListener:
             "engine": self.name + ":" + self.model_name,
         }
 
-    def _record(self, seconds: int):
+    def _record(self, seconds: int, on_ready=None):
         """Capture mono 16 kHz from the chosen device."""
         try:
             import numpy
@@ -240,16 +246,42 @@ class WhisperListener:
         index, resolved = resolve_device(self.preferred_device)
         used = resolved or self._windows_default_name(input_devices())
         frames: queue.Queue = queue.Queue()
+        live = threading.Event()
 
         def collect(indata, _frames, _time, status):
             if status:
                 self.last_error = str(status)
+            # The first callback is the proof the link is actually carrying
+            # audio, not merely that the stream object was created.
+            live.set()
             frames.put(indata.copy())
 
         try:
             with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS,
                                 dtype="float32", device=index,
                                 callback=collect):
+                # A Bluetooth microphone link takes a few hundred milliseconds
+                # to come up, and opening the stream is not the same as the
+                # headset sending anything. The gap costs a word: on this
+                # machine "Joe can you hear me through the headset" came back
+                # without "Joe" - the wake word, which is the one that must
+                # survive.
+                #
+                # So the clock starts when audio actually arrives, not when the
+                # stream object is created. Nothing captured is discarded -
+                # words spoken before the link was up are lost in the hardware
+                # and no software can recover them, but throwing away the ones
+                # that did arrive would only lose more.
+                #
+                # on_ready fires at the moment the microphone is genuinely
+                # live, so a caller can tell Mike to speak then rather than a
+                # half-second too early.
+                live.wait(LINK_WARMUP_SECONDS)
+                if on_ready is not None:
+                    try:
+                        on_ready()
+                    except Exception:  # noqa: BLE001 - a prompt must not stop a recording
+                        pass
                 threading.Event().wait(max(1, int(seconds)))
         except Exception as error:  # noqa: BLE001
             return None, _brief(error), used

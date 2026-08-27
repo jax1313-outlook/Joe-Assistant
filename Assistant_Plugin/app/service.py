@@ -1263,8 +1263,8 @@ class AssistantService(ReasoningCapabilities):
         )
         return attempt.to_dict()
 
-    def listen(self, seconds: int = 6) -> dict:
-        result = self.voice.listen(seconds)
+    def listen(self, seconds: int = 6, on_ready=None) -> dict:
+        result = self.voice.listen(seconds, on_ready=on_ready)
         self.log.event(
             "voice_listen",
             ("recognized" if result.get("recognized") else "nothing recognized"),
