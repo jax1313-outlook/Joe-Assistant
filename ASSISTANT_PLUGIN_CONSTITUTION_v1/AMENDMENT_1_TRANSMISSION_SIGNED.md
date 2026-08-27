@@ -101,7 +101,7 @@ carries six conditions on transmission:
 
 plus condition **6.1: hearing must be proven first.**
 
-The signed text above does not restate them. Two readings are possible, and
+The signed text above does not restate them. Two readings were possible, and
 they produce materially different software:
 
 - **A.** The signed text **grants the authority**; the six conditions govern
@@ -109,9 +109,31 @@ they produce materially different software:
 - **B.** The signed text **replaces** the draft, and the six conditions do not
   apply.
 
-**This is unresolved and is not for the implementation to decide.** No
-transmission path will be built under either reading until Mike states which
-governs. Recorded here so the question cannot be lost.
+### RULED — 27 August 2026, Mike Zachary
+
+**Reading A governs.** The signature grants the authority. All six conditions
+of `AMENDMENT_1_TRANSMISSION_PROPOSED.md` govern each transmission:
+
+| | condition | binding |
+| - | --------- | ------- |
+| 2.3.1 | explicit authorisation, per message | yes |
+| 2.3.2 | read-back of the binding content before authorisation | yes |
+| 2.3.3 | nothing supplied that Mike did not state | yes |
+| 2.3.4 | a withdrawal window between authorisation and transmission | yes |
+| 2.3.5 | Dispatch owns the transmission record; JOE never becomes its authoritative source | yes |
+| 2.3.6 | an unheard command is not a command | yes |
+
+**Condition 6.1 also stands: hearing must be proven first.** The transmission
+path may be built, and shall remain **inert** — incapable of sending — until
+the cab microphone test passes on the machine that will run it. Whisper reached
+100% in a quiet room; the truck is a different acoustic problem, and "JOE send
+it now" misheard is a packet on the wire.
+
+    py proof\prove_microphone.py --say "JOE send it now"
+
+Nothing about this ruling weakens section 2: JOE still has no send path, and
+`_assert_read_only()` still refuses `.Send(`. Building one is separate work,
+and it is gated behind proven hearing.
 
 ## 5. What does not change under either reading
 

@@ -5,14 +5,19 @@
 **Amends:** Document 2 of 5 — Constitution, v1.0
 **Proposed version:** 2.0 (a rule is added — Governance 6.3)
 **Drafted:** 27 August 2026
-**Status:** **PROPOSED. NOT IN FORCE.**
+**Status:** **IN FORCE as the operating conditions of Amendment 1.**
 
-> **27 August 2026.** Mike signed a Transmission Authority amendment whose
-> text differs from this draft - see `AMENDMENT_1_TRANSMISSION_SIGNED.md`.
-> Whether the six conditions below govern transmissions under that
-> signature, or are replaced by it, is an open question recorded in
-> section 4 of that document and awaiting Mike's ruling. This draft is
-> left unaltered until he decides.
+> **27 August 2026.** Mike signed a Transmission Authority amendment - see
+> `AMENDMENT_1_TRANSMISSION_SIGNED.md` - and ruled that its signature **grants
+> the authority, while the six conditions below govern how each transmission
+> happens.** They are binding.
+>
+> Condition 6.1 stands with them: hearing must be proven on the machine that
+> will run it before any transmission path is armed. The path may be built; it
+> stays inert until the cab microphone test passes.
+>
+> The conditions below are unaltered from the draft Mike approved, and 2.3.5
+> remains in his own words.
 Only Mike Zachary may amend this document set (Governance 6.1), and an
 amendment is made in writing, not in conversation (Governance 6.2). Nothing
 below binds anything until he signs it.
