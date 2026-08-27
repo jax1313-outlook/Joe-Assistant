@@ -19,6 +19,8 @@ gate like any other response.
 
 from __future__ import annotations
 
+import re
+
 from contracts import (
     AssistantResponse,
     Capability,
@@ -72,6 +74,14 @@ differences mean means matter matters
 MIN_SUBJECT_COVERAGE = 0.5
 
 
+# Inline markdown links, as Copilot footnotes its prose. A purely numeric or
+# punctuation label is a footnote marker and says nothing aloud; a worded label
+# is part of the sentence and survives without its URL.
+_NUMERIC_LINK = re.compile(r"\[[\d\s.,;:\-]*\]\((?:https?://[^)\s]+)\)")
+_WORDED_LINK = re.compile(r"\[([^\]\n]{1,120}?)\]\((?:https?://[^)\s]+)\)")
+_EXTRA_SPACE = re.compile(r"\s{2,}")
+
+
 def headline(text: str, limit: int = 300) -> str:
     """The first line that actually says something.
 
@@ -94,7 +104,16 @@ def headline(text: str, limit: int = 300) -> str:
         if stripped.endswith(":") and len(stripped) <= 40:
             continue
         stripped = stripped.lstrip("-*0123456789. ").strip()
+        # Copilot footnotes its prose with inline markdown links, and driver
+        # mode read them out: "Exit 451 ... 1 https colon slash slash w w w dot
+        # iexitapp dot com". A footnote number carries nothing when spoken, so
+        # a numeric label goes entirely; a worded label keeps its words and
+        # loses the URL. The links are preserved in the written record, which
+        # is where doctrine section 21 puts them.
+        stripped = _NUMERIC_LINK.sub("", stripped)
+        stripped = _WORDED_LINK.sub(r"\1", stripped)
         stripped = stripped.replace("**", "").replace("__", "").replace("`", "")
+        stripped = _EXTRA_SPACE.sub(" ", stripped).strip(" ,;")
         if stripped:
             return stripped[:limit]
     return (text or "").strip()[:limit]

@@ -656,11 +656,34 @@ class AssistantService(ReasoningCapabilities):
             "  " + short,
         ]
 
+        # A live search that returns no sources still returns PROSE, because the
+        # model falls back on memory. The written record was already honest
+        # about that - "(none returned)", "WEB GROUNDING WAS NOT CONFIRMED" -
+        # but the spoken form was not. Read aloud, an unsourced "Exit 451"
+        # sounded exactly like a sourced one, and nothing told Mike apart.
+        # That is memory wearing a current fact's clothes: sections 19, 20.7
+        # and 33.
+        #
+        # The answer still comes first, because a caveat Mike has to sit through
+        # before hearing the number is its own kind of noise. It just does not
+        # end there any more.
+        #
+        # Proven by fault injection rather than by waiting for the weather:
+        # planting `citations = []` in the research adapter makes this branch
+        # fire, and JOE says "unverified" instead of stating the exit flat.
+        spoken = short
+        if not citations:
+            spoken = (
+                short.rstrip(" .")
+                + ". I could not confirm that against a current source, so "
+                "treat it as unverified."
+            )
+
         response = AssistantResponse(
             capability=Capability.RESEARCH,
             answer=short,
             written="\n".join(body),
-            spoken_summary=short,
+            spoken_summary=spoken,
             citations=citations,
             findings=citations[:6],
             recommendation="Check the official source before acting on this.",

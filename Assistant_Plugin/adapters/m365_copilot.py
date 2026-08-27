@@ -36,6 +36,7 @@ truth, or treat silence as consent. It has no method that could.
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -123,6 +124,12 @@ class CopilotReply:
         return bool(self.sensitivity.get("isEncrypted"))
 
 
+# A markdown link as Copilot writes them inline: [1](https://example.com/x).
+# The label is usually a footnote number, which is why the URL is kept as the
+# display name when the label carries nothing.
+_INLINE_LINK = re.compile(r"\[([^\]\n]{0,120}?)\]\((https?://[^)\s]+)\)")
+
+
 def parse_conversation(payload: dict) -> CopilotReply:
     """Pull the assistant's turn out of a copilotConversation payload.
 
@@ -147,6 +154,31 @@ def parse_conversation(payload: dict) -> CopilotReply:
             reply.citations.append(attribution)
         else:
             reply.annotations.append(attribution)
+
+    # Copilot footnotes its prose with inline markdown links as well as filling
+    # `attributions`: "... Exit 451 ... [1](https://www.iexitapp.com/...)". This
+    # recovers those links when `attributions` comes back empty, so a reply that
+    # carries its sources only in the text can still be cited rather than
+    # reported as unsourced.
+    #
+    # HONESTLY LABELLED: this is defensive, not a fix for an observed outage.
+    # It was written while a leftover planted fault - `citations = []` in
+    # research_provider, left behind by a fault-injection run that was killed
+    # before it could restore - was making every research call look unsourced.
+    # With that fault removed the same question returns three to six
+    # attributions every time, so this branch has never yet fired in practice.
+    #
+    # Fallback only. A real attribution carries more than a URL, so it wins
+    # whenever Copilot supplies one.
+    if not reply.citations:
+        for label, url in _INLINE_LINK.findall(reply.text):
+            if not url.lower().startswith(("http://", "https://")):
+                continue
+            reply.citations.append({
+                "providerDisplayName": label.strip() or url,
+                "seeMoreWebUrl": url,
+                "recoveredFromText": True,
+            })
 
     sensitivity = last.get("sensitivityLabel")
     if isinstance(sensitivity, dict):
