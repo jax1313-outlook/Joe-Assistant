@@ -48,7 +48,7 @@ half varies, which is what doctrine section 42 requires
 ```
 asked               What is the driving distance between Jacksonville Florida and Atlanta Georgia?
 capability          ANSWER
-spoken              The driving distance between Jacksonville, Florida, and Atlanta, Georgia is typically about 345 to 350 miles (555 to 565 km) by the most common highway route.
+spoken              The driving distance between Jacksonville, Florida and Atlanta, Georgia is roughly 345 to 365 miles (555 to 587 km), depending on the exact start and destination points and the rou
 refused for context False
 carries a distance  True
 
@@ -73,10 +73,13 @@ form is not required to carry a repetitive disclaimer
 asked               What is the I-75 exit number for the first Love's in Florida?
 capability          RESEARCH
 routed to Research  True
-spoken              I cannot verify the answer from my stored knowledge alone. Using current web sources, the first Love's Travel Stop in Florida when traveling southbound on I-75 from Georgia appears
-sources returned    0
+spoken              If you're coming south from Georgia into Florida on I-75, the first Love's shown on current travel-stop listings is at Exit 451 in Jasper, Florida.
+sources returned    6
+    Loves along I-75 exits in Florida | iExit Interstate Exit Guide  https://www.iexitapp.com/exits/Florida/I-75/South/577/Loves/81
+    Loves Travel Stop Florida FL Locations - Allstays  https://www.allstays.com/c/loves-florida-locations.htm
+    Love's Travel Stop #724  https://www.loves.com/locations/fl/lake-city/loves-travel-stop-lake-city-724
 names a specific exit          True
-admits it could not verify     True
+admits it could not verify     False
 stated a fact with no source   False
 
 Mike did not say the word 'research'. He asked the way a driver asks.
@@ -97,7 +100,7 @@ the citations from step 5 remain in the written record
 ```
 asked                  What is our detention rate?
 classified as          COMPANY
-spoken                 The supplied context does not contain a detention rate for Level 1 Transport, so I cannot tell you what your detention rate is.
+spoken                 No answer is available in the supplied context.
 quoted a detention rate       False
 substituted industry practice False
 admits the record is silent   True  (reported, not required - phrasing varies)
@@ -126,7 +129,7 @@ provider calls made        1
 calls carrying company context   1
 calls with the context stripped  0
 calls under any other class      0
-spoken                     The supplied context does not state a detention rate for Level 1 Transport, so I cannot tell you what your detention rate is.
+spoken                     No detention rate is provided in the supplied context.
 
 a stripped-context retry here would answer a Level 1 question from
 general knowledge - doctrine section 11.5

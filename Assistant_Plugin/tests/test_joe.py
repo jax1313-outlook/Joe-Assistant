@@ -3116,5 +3116,166 @@ class TestCopilotInService(PluginTestCase):
         self.assertFalse(status.live_connection)
 
 
+class TestTruthClasses(unittest.TestCase):
+    """Doctrine v1.0: knowledge, research and truth classes.
+
+    Offline and deterministic. The live behaviour is proven separately by
+    proof/run_truth_class_proof.py, which asks a real provider real questions;
+    these tests hold the parts that must not drift between those runs.
+    """
+
+    # The doctrine's own worked examples, sections 9, 13 and 18. The doctrine
+    # is the answer key - none of this is the implementation's preference.
+    COMPANY_QUESTIONS = (
+        "What is our rate floor policy?",
+        "What does the POP procedure require?",
+        "What does the Dispatch Constitution say?",
+        "What is on my work calendar?",
+        "Did a broker reply?",
+        "What rate is shown on the current card?",
+        "What equipment does this opportunity require?",
+        "What did Level 1 Transport decide about reserve capacity?",
+    )
+    GENERAL_QUESTIONS = (
+        "What is a rate floor?",
+        "Why does a rate floor matter?",
+        "What does deadhead mean?",
+        "What is a hazmat endorsement?",
+        "Explain fuel surcharge.",
+        "What is the difference between gross and net revenue?",
+        "Why does truck position matter?",
+        "What is the general distance between Jacksonville and Atlanta?",
+    )
+    LIVE_QUESTIONS = (
+        "What is the first Love's on I-75 in Florida?",
+        "Is that truck stop currently open?",
+        "What is the current weather?",
+        "Is I-95 closed?",
+        "What is current traffic near the port?",
+        "What are today's fuel prices?",
+        "What are the current shipper hours?",
+        "What are current prices for a laptop?",
+    )
+
+    def test_doctrine_examples_are_classified_as_the_doctrine_says(self):
+        from app.truth_class import COMPANY, GENERAL, LIVE, classify
+        for expected, questions in (
+            (COMPANY, self.COMPANY_QUESTIONS),
+            (GENERAL, self.GENERAL_QUESTIONS),
+            (LIVE, self.LIVE_QUESTIONS),
+        ):
+            for question in questions:
+                with self.subTest(question=question):
+                    self.assertEqual(classify(question), expected)
+
+    def test_a_definition_is_not_a_company_question(self):
+        """A definition anyone can look up is not a company record.
+
+        "What is a broker" and "did a broker reply" differ by the verb, and
+        only one of them can be answered from Outlook."""
+        from app.truth_class import COMPANY, classify
+        for question in ("What is a broker?", "What does a shipper do?",
+                         "How do brokers make money?", "What is a consignee?"):
+            with self.subTest(question=question):
+                self.assertNotEqual(classify(question), COMPANY)
+
+    def test_the_context_lock_lives_only_in_the_company_framing(self):
+        """Section 42. The lock stopped invented company policy; it stopped
+        everything else too, which was never its job."""
+        from adapters.reasoning_provider import framing_for
+        lock = "Use only the CONTEXT supplied"
+        self.assertIn(lock, framing_for("COMPANY"))
+        for other in ("GENERAL", "LIVE", ""):
+            with self.subTest(truth_class=other or "(default)"):
+                self.assertNotIn(lock, framing_for(other))
+
+    def test_authority_travels_with_every_truth_class(self):
+        """Capability was widened. Authority was not."""
+        from adapters.reasoning_provider import framing_for
+        clause = "may not approve, decide, or state that any action has been taken"
+        for truth_class in ("COMPANY", "GENERAL", "LIVE", "", "nonsense"):
+            with self.subTest(truth_class=truth_class or "(default)"):
+                self.assertIn(clause, framing_for(truth_class))
+
+    def test_an_unknown_class_falls_back_to_answering_not_to_refusing(self):
+        """A misclassification should cost precision, never cost Mike the answer."""
+        from adapters.reasoning_provider import SYSTEM_FRAMING, framing_for
+        self.assertEqual(framing_for("banana"), SYSTEM_FRAMING)
+        self.assertNotIn("Use only the CONTEXT supplied", framing_for("banana"))
+
+    def test_a_hit_that_shares_a_word_does_not_count_as_an_answer(self):
+        """The Vision documents matched "driving" and missed the question.
+
+        Handed over as CONTEXT they produced "the supplied context does not
+        contain the driving distance", which read as JOE being unable to
+        answer a question any map could."""
+        from app.truth_class import hit_coverage, library_answers_this
+        weak = {"matched_terms": ["driving", "between", "jacksonville", "florida"],
+                "missing_terms": ["distance", "atlanta", "georgia"]}
+        strong = {"matched_terms": ["detention", "policy"], "missing_terms": []}
+        self.assertAlmostEqual(hit_coverage(weak), 4 / 7, places=3)
+        self.assertEqual(hit_coverage(strong), 1.0)
+        self.assertFalse(library_answers_this([weak]))
+        self.assertTrue(library_answers_this([weak, strong]))
+        self.assertFalse(library_answers_this([]))
+
+    def test_an_unrecognised_hit_shape_is_given_the_benefit_of_the_doubt(self):
+        from app.truth_class import library_answers_this
+        self.assertTrue(library_answers_this(["some other shape"]))
+
+    def test_a_company_question_never_gets_an_ungrounded_retry(self):
+        """Section 11.5. The retry drops the context deliberately; on a company
+        question whatever comes back is model knowledge in company clothes."""
+        from app.reasoning_capabilities import ReasoningCapabilities
+        from app.truth_class import COMPANY, GENERAL
+
+        class _Answer:
+            text = "The supplied context does not contain that."
+            ok = True
+
+        calls = []
+
+        class _Reasoning:
+            def answer(self, question, context="", sources=None, **options):
+                calls.append(options.get("truth_class"))
+                return _Answer()
+
+        class _Probe(ReasoningCapabilities):
+            def __init__(self):
+                self.reasoning = _Reasoning()
+
+        class _Request:
+            text = "What is our detention rate?"
+
+        probe = _Probe()
+        self.assertIsNone(probe._retry_ungrounded(
+            "ANSWER", _Request(), _Answer(), "", truth_class=COMPANY))
+        self.assertEqual(calls, [], "a company question must not be re-asked "
+                                    "with the company context stripped out")
+
+        # The same seam must still work for a general question, or "what is a
+        # drop-and-hook" goes back to being unanswerable.
+        probe._retry_ungrounded("ANSWER", _Request(), _Answer(), "",
+                                truth_class=GENERAL)
+        self.assertEqual(calls, [GENERAL])
+
+    def test_a_footnote_url_is_not_read_aloud(self):
+        """Section 21. Sources belong in the written record, not in the cab."""
+        from app.reasoning_capabilities import headline
+        spoken = headline(
+            "Exit 451. The first Love's is at Exit 451 (US-129), Jasper, FL. "
+            "[1](https://www.iexitapp.com/business/Loves/705000)"
+            "[2](https://www.loves.com/locations/fl)")
+        self.assertNotIn("http", spoken)
+        self.assertIn("Exit 451", spoken)
+
+    def test_a_worded_link_keeps_its_words_and_loses_its_url(self):
+        from app.reasoning_capabilities import headline
+        spoken = headline(
+            "See the [FMCSA hours rule](https://fmcsa.dot.gov/hos) for detail.")
+        self.assertEqual(spoken, "See the FMCSA hours rule for detail.")
+        self.assertNotIn("http", spoken)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
