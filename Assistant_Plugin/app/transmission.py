@@ -29,6 +29,41 @@ THE CONDITIONS, and where each one lives:
   6.1    hearing proven first                  arming_state() reads the real
                                                hearing proof for this machine
 
+OWNERSHIP — read this before extending anything here. 27 August 2026.
+
+Mike locked the communication architecture after this module was written, and
+roughly half of it is standing in the wrong house:
+
+    JOE           conversation
+    Publisher     artifact and packet production
+    COMI          communication workflow, routing, pending-approval state,
+                  and transmission records
+    Email Helper  Outlook mechanics, under COMI
+    Dispatch      the durable operational record
+
+Correctly placed here, because they are conversation:
+    BindingFact and its origin rule, read_back(), approve(), the approval and
+    withdrawal phrase matching, the confidence floor, read-back staleness, and
+    the condition 6.1 hearing check.
+
+Standing in COMI's house, to move:
+    envelope construction in stage() - recipients, subject, body, attachments.
+    JOE reads back COMI's envelope; it does not build one. Recipient routing is
+    COMI's, explicitly. provisional_record() moves too: COMI owns transmission
+    records, and JOE keeps only a review copy that EXPIRES.
+
+Standing in Email Helper's house, to delete:
+    transmit(). JOE must not be the Outlook adapter. When COMI and Email Helper
+    exist this function is removed, not armed.
+
+The approval handoff does NOT need a new channel. DispatchPort.submit() already
+exists (adapters/dispatch_port.py:145), validates against SUBMITTABLE, and
+returns an ActionRequest carrying accepted=False, performed=False,
+auto_execute=False, decision_required_from="Mike Zachary". It needs one new
+kind, `approval_event`, and nothing more.
+
+Full audit: ASSISTANT_PLUGIN_CONSTITUTION_v1/COMMUNICATION_OWNERSHIP_AUDIT_v1.md
+
 WHY THE FACTS CARRY AN ORIGIN. The failure this prevents is quiet and
 plausible: JOE fills in a rate, a date, or a term that nobody stated, the
 read-back sounds right because it is fluent, and Mike approves a number he
