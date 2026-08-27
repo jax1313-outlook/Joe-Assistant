@@ -87,9 +87,20 @@ the message briefly and says so. "Cancel" stops it. This costs nothing against
 a broker and is the only chance to unmake a decision that email otherwise makes
 permanent.
 
-**2.3.5 The record goes to Dispatch.** What was sent, to whom, when, and on
-what authorisation is handed to Dispatch as the system of record. JOE retains a
-copy, marked a copy (3.2). JOE does not own the sent record.
+**2.3.5 The authoritative record of transmission belongs to Dispatch.** What
+was sent, to whom, when, and on what authorisation is handed to Dispatch as the
+system of record.
+
+> JOE may retain a temporary interaction record showing that transmission
+> occurred, but JOE shall never become the authoritative source of
+> transmission history.
+
+The word *temporary* is doing real work. A permanent log of every send becomes
+a transmission history by accumulation, whatever each entry is labelled — and
+the moment anyone checks JOE to find out what went out, JOE has become the
+system of record for it. So a transmission record is an ordinary Level 1
+interaction record: it expires like any other unless Mike preserves it, and it
+is never the place anyone looks to settle what was sent.
 
 **2.3.6 An unheard command is not a command.** If JOE is not confident it heard
 the authorisation, it asks again. It never resolves doubt by acting.
@@ -120,7 +131,8 @@ Stated plainly, because an amendment that quietly widens is how doctrine drifts
 
 - JOE may not approve a rate, a load, a contract, a payment, or a plan.
 - JOE may not decide **whether** to send, **what** to offer, or **to whom**.
-- JOE may not own an operational record.
+- JOE may not own an operational record, and may not become the authoritative
+  source of transmission history.
 - JOE may not alter operational truth.
 - JOE may not replace Dispatch authority.
 - Silence is still never consent.
