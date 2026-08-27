@@ -1,6 +1,6 @@
 # JOE - Microphone Test and Diagnostics
 
-**Run:** 2026-08-27T17:26:41+00:00
+**Run:** 2026-08-27T17:34:54+00:00
 
 No raw audio is retained. Only recognized text and outcomes.
 
@@ -35,6 +35,6 @@ No raw audio is retained. Only recognized text and outcomes.
 | --- | --- |
 | Device | Headset |
 | Expected phrase | Joe can you hear me through the headset |
-| Recognized text | Can you hear me through the headset? |
-| Word match | 88% |
+| Recognized text | This is the headset. Can you hear me through the headset, Joe? |
+| Word match | 100% |
 | JOE heard itself | False |
