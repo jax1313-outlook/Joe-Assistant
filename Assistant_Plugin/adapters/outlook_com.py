@@ -42,6 +42,14 @@ from contracts import Provenance, SourceClass, SourceMode, stamp
 # a guard against a pathological address book, not an expected size.
 _CONTACTS_FETCH_MAX = 2000
 
+# How much of a message body to carry out of Outlook. A body is unbounded -
+# a long forwarded thread runs to hundreds of kilobytes - and every one of
+# those bytes would travel through JSON, into memory, and potentially into a
+# reasoning provider's context. The cap is generous enough for an ordinary
+# broker exchange and the row says when it bit, so a truncated body is never
+# mistaken for a short one.
+BODY_MAX_CHARS = 20000
+
 FORBIDDEN_COM_CALLS = (
     ".Send(", ".Send()", ".Save(", ".Save()", ".Delete(", ".Delete()",
     ".Move(", ".Reply(", ".ReplyAll(", ".Forward(", ".Add(", ".CreateItem(",
@@ -61,6 +69,41 @@ _PS_DATE = "%m/%d/%Y %I:%M %p"
 
 # What a correctly formatted filter date must look like.
 _PS_DATE_SHAPE = re.compile(r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2} (?:AM|PM)$")
+
+# Raw C0 control bytes, which JSON forbids inside a string. Tab, CR and LF are
+# included because ConvertTo-Json escapes those itself - anything left RAW in
+# the output is a byte Windows PowerShell failed to escape, whatever it is.
+# Anything below a space. Built from ord() rather than written as a regex
+# escape, because expressing this range as \x00 in source is exactly how a
+# real NUL byte got into this file once already.
+_LOWEST_PRINTABLE = 32
+
+
+def json_safe(text: str) -> tuple[str, int]:
+    """Remove control bytes PowerShell left unescaped. Returns (text, removed).
+
+    Windows PowerShell 5.1's ConvertTo-Json escapes tab, CR and LF and emits
+    the other C0 controls RAW, which is not valid JSON. One real broker mail
+    carrying a single 0x1A cost an entire read of 25 messages:
+
+        Invalid control character at: line 1 column 11706
+
+    and every message in that batch was lost to one invisible byte in one body.
+
+    Stripping in PowerShell was tried first and did not work - the -replace
+    matched nothing on the offending message even though the same expression
+    removes those characters in isolation. Rather than keep guessing at
+    PowerShell's regex semantics, the repair happens here, where it covers
+    every field at once and can be tested without Outlook.
+
+    Removing them cannot corrupt real content: a control byte carries no
+    meaning in a subject, an address, or a message body, and any that were
+    MEANT to be there would have arrived escaped.
+    """
+    original = text or ""
+    cleaned = "".join(c for c in original if ord(c) >= _LOWEST_PRINTABLE)
+    return cleaned, len(original) - len(cleaned)
+
 
 _SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
@@ -110,7 +153,7 @@ __PREPARE__
   $out.ok = $false
   $out.error = $_.Exception.Message
 }
-$out | ConvertTo-Json -Depth 4 -Compress
+$out | ConvertTo-Json -Depth 6 -Compress
 """
 
 _ACCOUNTS_SCRIPT = r"""
@@ -140,7 +183,7 @@ try {
   $out.ok = $false
   $out.error = $_.Exception.Message
 }
-$out | ConvertTo-Json -Depth 4 -Compress
+$out | ConvertTo-Json -Depth 6 -Compress
 """
 
 # Per-folder preparation of the item collection.
@@ -225,13 +268,88 @@ _FIELDS = {
         "    $row.organizer = [string]$i.Organizer\n"
         "    $row.all_day = [bool]$i.AllDayEvent"
     ),
+    # Stage A. Every line below is a PROPERTY READ. No entry of
+    # FORBIDDEN_COM_CALLS appears here, which is why _assert_read_only() passes
+    # over it unchanged - the richer read adds information, not authority.
+    #
+    # Each field is wrapped on its own. A message with an unreadable property -
+    # a corrupt item, a delegated mailbox that withholds a field, a meeting
+    # request that has no Body - must not take the whole row down with it, and
+    # must not silently return an empty string that reads like an empty field.
+    # The name of every field that failed is carried out in `field_errors`, so
+    # "not readable" and "empty" stay different facts.
+    #
+    # Arrays are built with += rather than .Add(), which the guard forbids.
     "inbox": (
-        "$row.subject = [string]$i.Subject\n"
-        "    $row.sender = [string]$i.SenderName\n"
-        "    $row.received = [string]$i.ReceivedTime\n"
-        "    $row.unread = [bool]$i.UnRead\n"
-        "    $row.importance = [int]$i.Importance\n"
-        "    $row.has_attachments = [bool]($i.Attachments.Count -gt 0)"
+        "$errs = @()\n"
+        # identity: the message, and the thread it belongs to
+        "    $row.entry_id = ''\n"
+        "    try { $row.entry_id = [string]$i.EntryID } catch { $errs += 'entry_id' }\n"
+        "    $row.conversation_id = ''\n"
+        "    try { $row.conversation_id = [string]$i.ConversationID } catch { $errs += 'conversation_id' }\n"
+        "    $row.subject = ''\n"
+        "    try { $row.subject = [string]$i.Subject } catch { $errs += 'subject' }\n"
+        # sender: display name, and the real SMTP address behind it
+        "    $row.sender = ''\n"
+        "    try { $row.sender = [string]$i.SenderName } catch { $errs += 'sender' }\n"
+        "    $row.sender_address = ''\n"
+        "    $row.sender_address_resolved = $false\n"
+        "    try {\n"
+        "      $addr = ''\n"
+        # An Exchange sender's SenderEmailAddress is a legacyExchangeDN
+        # (/O=.../CN=RECIPIENTS/CN=...), not an address anyone can reply to.
+        # GetExchangeUser() resolves it. It is a read.
+        "      if ($i.SenderEmailType -eq 'EX') {\n"
+        "        try { $ex = $i.Sender.GetExchangeUser(); if ($ex) { $addr = [string]$ex.PrimarySmtpAddress; $row.sender_address_resolved = $true } } catch { }\n"
+        "      }\n"
+        "      if ($addr -eq '') { $addr = [string]$i.SenderEmailAddress }\n"
+        "      $row.sender_address = $addr\n"
+        "    } catch { $errs += 'sender_address' }\n"
+        # recipients
+        "    $row.to = ''\n"
+        "    try { $row.to = [string]$i.To } catch { $errs += 'to' }\n"
+        "    $row.cc = ''\n"
+        "    try { $row.cc = [string]$i.CC } catch { $errs += 'cc' }\n"
+        # state
+        "    $row.received = ''\n"
+        "    try { $row.received = [string]$i.ReceivedTime } catch { $errs += 'received' }\n"
+        "    $row.unread = $false\n"
+        "    try { $row.unread = [bool]$i.UnRead } catch { $errs += 'unread' }\n"
+        "    $row.importance = 1\n"
+        "    try { $row.importance = [int]$i.Importance } catch { $errs += 'importance' }\n"
+        # body, capped and honest about the cap
+        "    $row.body = ''\n"
+        "    $row.body_truncated = $false\n"
+        "    $row.body_length = 0\n"
+        "    try {\n"
+        "      $b = [string]$i.Body\n"
+        "      $row.body_length = $b.Length\n"
+        # Windows PowerShell 5.1 ConvertTo-Json escapes tab, CR and LF and
+        # emits the other C0 controls RAW, which is not valid JSON. One real
+        # message carrying one invisible byte cost the whole read of 25:
+        # "Invalid control character at column 11551", and every message in
+        # that batch was lost with it. Strip the ones JSON cannot carry, keep
+        # the three that mean something in a body, and say when it happened.
+        "      if ($b.Length -gt __BODYMAX__) { $row.body = $b.Substring(0, __BODYMAX__); $row.body_truncated = $true }\n"
+        "      else { $row.body = $b }\n"
+        "    } catch { $errs += 'body' }\n"
+        # attachments: names, types, sizes, identities. NOT contents.
+        "    $row.has_attachments = $false\n"
+        "    $atts = @()\n"
+        "    try {\n"
+        "      $row.has_attachments = [bool]($i.Attachments.Count -gt 0)\n"
+        "      foreach ($a in $i.Attachments) {\n"
+        "        $one = [ordered]@{ name = ''; display_name = ''; size = 0; type = 0; index = 0 }\n"
+        "        try { $one.name = [string]$a.FileName } catch { }\n"
+        "        try { $one.display_name = [string]$a.DisplayName } catch { }\n"
+        "        try { $one.size = [int]$a.Size } catch { }\n"
+        "        try { $one.type = [int]$a.Type } catch { }\n"
+        "        try { $one.index = [int]$a.Index } catch { }\n"
+        "        $atts += $one\n"
+        "      }\n"
+        "    } catch { $errs += 'attachments' }\n"
+        "    $row.attachments = $atts\n"
+        "    $row.field_errors = $errs"
     ),
     "contacts": (
         "$row.display_name = [string]$i.FullName\n"
@@ -469,6 +587,7 @@ class OutlookComAdapter:
             .replace("__ACCOUNT__", wanted)
             .replace("__PREPARE__", prepare)
             .replace("__FIELDS__", _FIELDS[folder])
+            .replace("__BODYMAX__", str(BODY_MAX_CHARS))
         )
         self._assert_read_only(script)
         return script
@@ -519,7 +638,7 @@ class OutlookComAdapter:
             self.last_error = err or "Outlook returned nothing"
             return OutlookResult(ok=False, error=self.last_error)
         try:
-            payload = json.loads(out)
+            payload = json.loads(json_safe(out)[0])
         except json.JSONDecodeError:
             self.last_error = "Outlook returned output that could not be read"
             return OutlookResult(ok=False, error=self.last_error)
@@ -626,7 +745,7 @@ class OutlookComAdapter:
         if not ran or not out:
             return unknown(err or "could not list Outlook accounts")
         try:
-            payload = json.loads(out)
+            payload = json.loads(json_safe(out)[0])
         except json.JSONDecodeError:
             return unknown("Outlook returned output that could not be read")
         if not payload.get("ok"):
@@ -692,7 +811,7 @@ class OutlookComAdapter:
         )
         ran, out, _ = self._powershell(script, timeout=30)
         try:
-            payload = json.loads(out or "{}")
+            payload = json.loads(json_safe(out or "{}")[0])
         except json.JSONDecodeError:
             payload = {}
         registered = bool(payload.get("com")) and bool(payload.get("profiles"))

@@ -3465,5 +3465,166 @@ class TestTransmissionIsInert(unittest.TestCase):
             self._staged(recipients=())
 
 
+class TestStageARicherReads(unittest.TestCase):
+    """Stage A: complete read-only mail retrieval.
+
+    Offline. The live evidence is recorded in
+    ASSISTANT_PLUGIN_CONSTITUTION_v1/COMMUNICATION_OWNERSHIP_AUDIT_v1.md; these
+    hold the parts that must not drift - the field set, the continued physical
+    inability to write, and honest failure when a property cannot be read.
+    """
+
+    REQUIRED_FIELDS = (
+        "entry_id", "conversation_id", "sender", "sender_address",
+        "to", "cc", "subject", "received", "unread", "importance",
+        "body", "body_length", "body_truncated",
+        "has_attachments", "attachments", "field_errors",
+    )
+
+    def _adapter(self):
+        from adapters.outlook_com import OutlookComAdapter
+        a = OutlookComAdapter.__new__(OutlookComAdapter)
+        a.account = ""
+        a.max_items = 25
+        a.calendar_window_days = 7
+        a.enabled = True
+        a.timeout_seconds = 30
+        a.last_error = ""
+        a.started_outlook = False
+        return a
+
+    # ---- complete reads ------------------------------------------------
+
+    def test_every_required_field_is_requested(self):
+        script = self._adapter()._build_script("inbox")
+        for field in self.REQUIRED_FIELDS:
+            with self.subTest(field=field):
+                self.assertIn(field, script)
+
+    def test_attachment_identity_is_requested_but_not_its_content(self):
+        script = self._adapter()._build_script("inbox")
+        for wanted in ("$a.FileName", "$a.Size", "$a.Type", "$a.Index"):
+            with self.subTest(property=wanted):
+                self.assertIn(wanted, script)
+        # Reading a name is not extracting a file.
+        for forbidden in ("SaveAsFile", "$a.SaveAs"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, script)
+
+    def test_an_exchange_sender_is_resolved_to_a_real_address(self):
+        """SenderEmailAddress on an Exchange message is a legacyExchangeDN,
+        which nobody can reply to. GetExchangeUser resolves it, and it is a
+        read."""
+        script = self._adapter()._build_script("inbox")
+        self.assertIn("GetExchangeUser", script)
+        self.assertIn("PrimarySmtpAddress", script)
+        self.assertIn("sender_address_resolved", script)
+
+    def test_the_body_is_capped_and_says_when_it_was(self):
+        from adapters.outlook_com import BODY_MAX_CHARS
+        script = self._adapter()._build_script("inbox")
+        self.assertIn(str(BODY_MAX_CHARS), script)
+        self.assertIn("body_truncated", script)
+        self.assertIn("body_length", script)
+        self.assertNotIn("__BODYMAX__", script)
+
+    # ---- still physically unable to write or send ----------------------
+
+    def test_the_richer_script_contains_no_forbidden_call(self):
+        from adapters.outlook_com import FORBIDDEN_COM_CALLS
+        for folder in ("inbox", "calendar", "contacts"):
+            script = self._adapter()._build_script(folder)
+            for call in FORBIDDEN_COM_CALLS:
+                with self.subTest(folder=folder, call=call):
+                    self.assertNotIn(call, script)
+
+    def test_the_guard_still_bites_when_a_write_is_introduced(self):
+        """Positive control. A guard that never fires proves nothing."""
+        from adapters.outlook_com import OutlookAdapterError, OutlookComAdapter
+        script = self._adapter()._build_script("inbox")
+        for injected in ("$i.Send()", "$i.Delete()", "$i.Move($f)",
+                         "$i.Reply()", "$i.Attachments.Add('x')"):
+            with self.subTest(injected=injected):
+                with self.assertRaises(OutlookAdapterError):
+                    OutlookComAdapter._assert_read_only(script + "\n" + injected)
+
+    def test_no_send_or_draft_verb_reaches_the_script(self):
+        """Call forms, not bare words.
+
+        The first version of this test looked for "Send" and matched
+        $i.SenderName - failing a script whose only crime was reading who a
+        message came from. A substring is not a call."""
+        script = self._adapter()._build_script("inbox")
+        for verb in (".Send(", ".Post(", ".CreateItem(", ".Reply(",
+                     ".Forward(", ".SaveAs(", "MailItem", "smtplib",
+                     "Net.Mail", "SmtpClient"):
+            with self.subTest(verb=verb):
+                self.assertNotIn(verb, script)
+
+    # ---- honest failure ------------------------------------------------
+
+    def test_unescaped_control_bytes_are_repaired_not_lost(self):
+        """One 0x1A in one body cost an entire read of 25 messages."""
+        import json as _json
+        from adapters.outlook_com import json_safe
+        raw = '{"body":"Lane: Origin' + chr(26) + " destination" + chr(7) + '"}'
+        cleaned, removed = json_safe(raw)
+        self.assertEqual(removed, 2)
+        self.assertEqual(_json.loads(cleaned)["body"], "Lane: Origin destination")
+
+    def test_clean_output_is_left_exactly_alone(self):
+        from adapters.outlook_com import json_safe
+        for payload in ('{"a":1}', '{"body":"line one\\nline two\\ttabbed"}', ""):
+            with self.subTest(payload=payload):
+                self.assertEqual(json_safe(payload), (payload, 0))
+
+    def test_malformed_output_fails_honestly_and_invents_nothing(self):
+        from adapters.outlook_com import OutlookComAdapter
+        a = self._adapter()
+        a.timeout_seconds = 30
+        a.last_error = ""
+        a._powershell = lambda script, timeout=None: (True, "not json at all", "")
+        result = OutlookComAdapter._run(a, "inbox")
+        self.assertFalse(result.ok)
+        self.assertTrue(result.error)
+        self.assertEqual(list(result.items or []), [],
+                         "a failed read must return no items, not plausible ones")
+
+    def test_a_row_reports_which_properties_could_not_be_read(self):
+        """field_errors keeps 'unreadable' and 'empty' different facts."""
+        script = self._adapter()._build_script("inbox")
+        self.assertIn("field_errors", script)
+        self.assertIn("$errs = @()", script)
+        # every risky property is individually guarded
+        self.assertGreaterEqual(script.count("catch { $errs +="), 10)
+
+    def test_one_unreadable_property_does_not_lose_the_whole_row(self):
+        """Each field is defaulted before its try, so a failure leaves a
+        usable row carrying the name of what failed."""
+        script = self._adapter()._build_script("inbox")
+        for field in ("entry_id", "conversation_id", "subject", "sender",
+                      "sender_address", "to", "cc", "received", "body"):
+            with self.subTest(field=field):
+                default = "$row." + field + " = ''"
+                self.assertIn(default, script,
+                              field + " has no default before its try")
+
+    # ---- section 28 / B3 at the trust boundary -------------------------
+
+    def test_a_question_about_mail_is_company_truth_and_never_goes_to_the_web(self):
+        """Reuses the existing truth-class boundary rather than adding a
+        second privacy system. A mail question classifies COMPANY, and the
+        COMPANY framing carries the supplied-context lock, so a body cannot
+        leave in a public query."""
+        from adapters.reasoning_provider import framing_for
+        from app.truth_class import COMPANY, classify
+        for question in ("Did a broker reply?",
+                         "What did the broker say in my email?",
+                         "Summarise my inbox"):
+            with self.subTest(question=question):
+                self.assertEqual(classify(question), COMPANY)
+        self.assertIn("Use only the CONTEXT supplied", framing_for(COMPANY))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

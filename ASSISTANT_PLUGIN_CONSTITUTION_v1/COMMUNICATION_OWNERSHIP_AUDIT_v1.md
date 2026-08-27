@@ -113,28 +113,65 @@ else is reuse.
 Mission-sized. Ordered so that nothing depends on something unbuilt, and so
 each stage is provable on its own.
 
-### A. Richer Email Helper reads
+### A. Richer Email Helper reads — **IMPLEMENTED 27 August 2026**
 
 **Owner:** Email Helper. **JOE:** consumer only.
-**Governance:** none needed — read-only.
+**Governance:** none needed, and none taken.
 
-Today a mail read returns `subject, sender NAME, received, unread,
-has_attachments` (`adapters/outlook_com.py:228`). Missing: **body, sender
-address, message/thread identity, attachment names**.
+Evidence below is measured against `Ops@l1truck.com`, not projected.
 
-- A1. Extend the read projection with `EntryID`, `ConversationID`,
-  `SenderEmailAddress`, `Body`, and attachment *names* (names only — no file
-  extraction yet).
-- A2. Keep every addition inside the existing `_assert_read_only()` guard. All
-  are property reads; **no forbidden call is needed**, which is the proof this
-  stage adds no authority.
-- A3. Redaction pass before anything reaches a reasoning provider — a body may
-  contain rates, contacts and terms. Reuse the truth-class COMPANY framing.
-- A4. Proof: read a real message and show body + address + identity, with the
-  guard still refusing `.Send(`.
+**Fields now returned** (`adapters/outlook_com.py`, `_FIELDS["inbox"]`):
 
-**Risk:** message bodies are the largest privacy surface JOE has touched.
-Doctrine §28 governs what may leave the tenant in a query.
+| required | field | live evidence, 25 messages |
+| -------- | ----- | -------------------------- |
+| message identity | `entry_id` | 140 chars, **25 distinct of 25**; the 128-char shared prefix is the store, not a collision |
+| thread identity | `conversation_id` | 24 distinct conversations across 25 messages |
+| sender display name | `sender` | 25 of 25 |
+| sender email address | `sender_address`, `sender_address_resolved` | 25 of 25; **4 resolved from Exchange** via `GetExchangeUser().PrimarySmtpAddress` |
+| To / CC | `to`, `cc` | 25 / 1 populated |
+| subject | `subject` | 25 of 25 |
+| received timestamp | `received` | 25 of 25 |
+| body | `body`, `body_length`, `body_truncated` | 25 of 25; **1 truncated at 20,000 chars**, flagged |
+| unread / importance | `unread`, `importance` | 25 of 25 |
+| attachment names, types, sizes, identities | `attachments[]` — `name, display_name, size, type, index` | **17 attachments** read; e.g. `Invoice-49WASAJV-0002.pdf`, 32,000 bytes, type 1, index 1 |
+| honest failure | `field_errors[]` | **0 rows reported an error** |
+
+**Still physically unable to write or send — asserted, not assumed:**
+
+- The generated script contains **none** of the 21 `FORBIDDEN_COM_CALLS`, for
+  all three folders. Every added line is a property read.
+- `_assert_read_only()` is unchanged and still bites: injecting `.Send()`,
+  `.Delete()`, `.Move()`, `.Reply()` or `.Attachments.Add()` into the finished
+  script raises `OutlookAdapterError` (positive control, five injections).
+- No `MailItem`, `CreateItem`, `SmtpClient`, `Net.Mail` or `smtplib` anywhere
+  in the script.
+- Attachment **names** are read; `SaveAsFile` is absent, so nothing is
+  extracted to disk.
+
+**A defect this stage found and fixed.** Windows PowerShell 5.1's
+`ConvertTo-Json` escapes tab, CR and LF and emits the other C0 control bytes
+**raw**, which is not valid JSON. A single `0x1A` inside one broker message
+body cost the entire read of 25:
+
+    Invalid control character at: line 1 column 11706
+
+Every message in that batch was lost to one invisible byte. Stripping the
+characters in PowerShell was tried first and **did not work** — the `-replace`
+reported removing nothing on the offending message even though the identical
+expression removes those bytes in isolation. Rather than keep guessing at
+PowerShell's regex semantics, the repair was moved to Python (`json_safe()`),
+where it covers every field at once and is testable without Outlook. The
+non-functional PowerShell strip was then **removed rather than left in place**,
+because code implying a protection it does not provide is worse than none.
+
+**§28 / B3 at the trust boundary — existing controls, no parallel system.**
+A question about mail classifies as **COMPANY** (`app/truth_class.py`), and the
+COMPANY framing carries the supplied-context lock, so a message body is never
+placed in a web-enabled query. The body cap (`BODY_MAX_CHARS = 20000`) bounds
+what can travel at all, and reports when it bit. Nothing is redacted *inside*
+the approved environment, where operationally necessary content must survive.
+
+**Tests:** `TestStageARicherReads` — 13 tests, 115 subtests.
 
 ### B. Publisher dual-copy production
 

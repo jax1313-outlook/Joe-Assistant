@@ -48,7 +48,7 @@ half varies, which is what doctrine section 42 requires
 ```
 asked               What is the driving distance between Jacksonville Florida and Atlanta Georgia?
 capability          ANSWER
-spoken              The driving distance from Jacksonville, Florida to Atlanta, Georgia is typically about 345 to 365 miles (555 to 587 km) depending on the exact starting point, destination, and rout
+spoken              The driving distance from Jacksonville, Florida, to Atlanta, Georgia is typically about 345 to 365 miles (555 to 590 km) depending on your exact starting point, destination, and ro
 refused for context False
 carries a distance  True
 
@@ -73,11 +73,11 @@ form is not required to carry a repetitive disclaimer
 asked               What is the I-75 exit number for the first Love's in Florida?
 capability          RESEARCH
 routed to Research  True
-spoken              If you're coming southbound from Georgia into Florida on I‑75, the first Love's shown by current I‑75 Florida exit listings is at Exit 451 in Jasper, Florida.
-sources returned    6
-    Loves along I-75 exits in Florida | iExit Interstate Exit Guide  https://www.iexitapp.com/exits/Florida/I-75/South/577/Loves/81
+spoken              If you're coming southbound on I-75 from Georgia into Florida, the first Love's I can currently verify is the Love's in Jasper, Florida at Exit 451.
+sources returned    7
+    Loves along I-75 exits in Florida | iExit Interstate Exit Guide  https://www.iexitapp.com/exits/Florida/I-75/North/577/Loves/81
     Loves Travel Stop Florida FL Locations - Allstays  https://www.allstays.com/c/loves-florida-locations.htm
-    Love's Travel Stop #724  https://www.loves.com/locations/fl/lake-city/loves-travel-stop-lake-city-724
+    Love's Travel Stop #363  https://www.loves.com/locations/fl/ocala/loves-travel-stop-ocala-363
 names a specific exit          True
 admits it could not verify     False
 stated a fact with no source   False
@@ -129,7 +129,7 @@ provider calls made        1
 calls carrying company context   1
 calls with the context stripped  0
 calls under any other class      0
-spoken                     The supplied context does not define a detention rate for Level 1 Transport.
+spoken                     Level 1 Transport's detention rate is not stated anywhere in the supplied context.
 
 a stripped-context retry here would answer a Level 1 question from
 general knowledge - doctrine section 11.5
