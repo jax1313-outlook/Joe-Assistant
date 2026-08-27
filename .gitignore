@@ -28,3 +28,7 @@ Assistant_Plugin/Deployment/
 # Tracking it from here would nest a repo inside a repo. Clone it separately:
 #   https://github.com/jax1313-outlook/Jules.git
 Build/Jules/
+
+# Personal Claude Code overrides. Per-machine by design, and this repository
+# is public - permission rules are nobody else's business.
+.claude/settings.local.json
