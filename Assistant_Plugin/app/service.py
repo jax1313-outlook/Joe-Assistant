@@ -1286,8 +1286,26 @@ class AssistantService(ReasoningCapabilities):
             device = ""
         parts = ["recognizer binds"]
         parts.append("microphone: " + (device or "NONE CONNECTED"))
-        parts.append("never proven with a live voice")
+        # Read, not asserted. This clause was the fixed words "never proven
+        # with a live voice", which was true when written and false the moment
+        # Mike proved it - a claim nobody checked, printed as a finding.
+        from .hearing_proof import summary as hearing_summary
+
+        parts.append(hearing_summary(self.config.runtime_data))
         return "; ".join(parts)
+
+    def _heard_a_voice_here(self, voice: dict) -> bool:
+        """Has a person spoken to JOE on this machine and been understood?
+
+        Not "can the engine load" - that is a different question with a
+        different answer, and conflating them is what let voice input read the
+        same whether or not anyone had ever tried it."""
+        if not voice.get("stt_engine_available"):
+            return False
+        from .hearing_proof import last as last_hearing
+
+        proof = last_hearing(self.config.runtime_data)
+        return bool(proof and proof.get("passed"))
 
     def _voice_input_blocker(self, voice: dict) -> str:
         if not voice.get("stt_engine_available"):
@@ -1300,8 +1318,20 @@ class AssistantService(ReasoningCapabilities):
                 return "no recording device is connected"
         except Exception:  # noqa: BLE001
             pass
-        return ("the engine binds, but no person has spoken to it. "
-                "Run the microphone test to prove it.")
+
+        # Binding is not hearing, so voice input stays blocked until a person
+        # has actually spoken to it ON THIS MACHINE and been understood. That
+        # was a permanent block before, which meant proving it changed nothing.
+        from .hearing_proof import last as last_hearing
+
+        proof = last_hearing(self.config.runtime_data)
+        if proof is None:
+            return ("the engine binds, but no person has spoken to it. "
+                    "Run the microphone test to prove it.")
+        if not proof.get("passed"):
+            return ("the last live test failed on this machine. "
+                    "Run the microphone test again.")
+        return ""
 
     def status(self) -> list[CapabilityStatus]:
         library = self.library.probe()
@@ -1385,13 +1415,22 @@ class AssistantService(ReasoningCapabilities):
             ),
             CapabilityStatus(
                 name="Voice in",
-                available=bool(voice.get("stt_engine_available")),
-                # READY, never LIVE. The recognizer binding proves the engine
-                # loads. It does not prove a person was ever heard, and this
-                # capability must not claim LIVE until one has been.
-                mode=SourceMode.UNAVAILABLE,
+                available=self._heard_a_voice_here(voice),
+                # LIVE only once a person has actually been heard ON THIS
+                # MACHINE. The recognizer binding proves the engine loads,
+                # which is not the same as hearing anybody - so this was pinned
+                # to UNAVAILABLE, with a comment saying it must not claim LIVE
+                # until someone had been heard.
+                #
+                # The reasoning was right and the pin was wrong: it made
+                # proving the thing change nothing, so the status said the same
+                # words whether or not Mike had ever spoken to it. It is read
+                # from the recorded result now, and a fresh machine has no
+                # record and correctly says so.
+                mode=(SourceMode.LIVE if self._heard_a_voice_here(voice)
+                      else SourceMode.UNAVAILABLE),
                 detail=self._voice_input_detail(voice),
-                live_connection=False,
+                live_connection=self._heard_a_voice_here(voice),
                 blocker=self._voice_input_blocker(voice),
             ),
             CapabilityStatus(

@@ -239,6 +239,31 @@ def main() -> int:
         result = live_test(service, diag)
         write_report(diag, result)
 
+        # Record on THIS machine that a person spoke, and what came back. The
+        # status panel reads it instead of asserting a fixed sentence about
+        # whether hearing has ever been proven. It lives under runtime_data,
+        # which the deployment package excludes, so a fresh install starts
+        # with no record and says so rather than inheriting this one.
+        try:
+            from app.hearing_proof import record as record_hearing
+
+            record_hearing(
+                service.config.runtime_data,
+                passed=bool(result["recognized"]
+                            and result["overlap"] >= PASS_THRESHOLD
+                            and result["self_heard"] is False),
+                phrase=TEST_PHRASE, heard=result["heard"],
+                overlap=result["overlap"], device=result["device"],
+                engine=str((service.voice.recognizer.name + ":"
+                            + service.voice.recognizer.model_name)
+                           if getattr(service.voice, "recognizer", None)
+                           else "system-speech"),
+                self_heard=result["self_heard"],
+            )
+        except Exception as error:  # noqa: BLE001 - evidence is already written
+            print("  (could not record the hearing proof: "
+                  + str(error)[:60] + ")")
+
         print(DIVIDER)
         if not result["attempted"]:
             print("RESULT: NOT TESTED - " + (result["error"] or "no device"))
