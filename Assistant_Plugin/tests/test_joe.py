@@ -1869,14 +1869,29 @@ class TestCopilotFailure(unittest.TestCase):
 
 
 class TestCopilotAuthentication(unittest.TestCase):
-    def setUp(self):
-        from adapters.m365_copilot_auth import CopilotAuth
+    """Sign-in state, tested independently of this machine's environment.
 
+    CopilotAuth falls back to ASSISTANT_COPILOT_TENANT_ID and
+    ASSISTANT_COPILOT_CLIENT_ID when no ids are passed in, and an empty string
+    cannot override that fallback - "" is falsy, so it reads the environment
+    anyway. So a machine that has signed in reports SIGNED OUT here where a
+    fresh one reports NOT CONFIGURED, and the test outcome depended on whose
+    machine it ran on. The environment is cleared for the duration instead."""
+
+    def setUp(self):
+        from adapters.m365_copilot_auth import (CopilotAuth, ENV_CLIENT,
+                                                ENV_TENANT)
+
+        self._saved_env = {name: os.environ.pop(name, None)
+                           for name in (ENV_TENANT, ENV_CLIENT)}
         self.root = WORKSPACE / uuid.uuid4().hex[:8]
         self.root.mkdir(parents=True, exist_ok=True)
         self.auth = CopilotAuth(cache_dir=self.root)
 
     def tearDown(self):
+        for name, value in self._saved_env.items():
+            if value is not None:
+                os.environ[name] = value
         shutil.rmtree(self.root, ignore_errors=True)
 
     def test_unconfigured_state(self):
