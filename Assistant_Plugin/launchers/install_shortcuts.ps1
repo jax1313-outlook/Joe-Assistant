@@ -48,6 +48,19 @@ $shell = New-Object -ComObject WScript.Shell
 $made = 0
 $skipped = @()
 
+# A shortcut to a .cmd flashes a black console every time it is used, because
+# Windows gives cmd.exe a console before the batch file can do anything - and
+# START_JOE.cmd's whole job is to find pyw and hand off to it. Pointing the
+# JOE shortcut straight at pyw.exe removes the middleman and the flash.
+#
+# The check START_JOE.cmd performs, that a Python launcher exists, is not lost.
+# It moves here, to install time, which is a better moment to discover a
+# missing Python than the moment Mike wants to use the program. If pyw is not
+# found the shortcut falls back to the batch file, which explains the problem
+# properly.
+$pyw = (Get-Command pyw.exe -ErrorAction SilentlyContinue |
+        Select-Object -First 1).Source
+
 foreach ($item in $shortcuts) {
     $target = Join-Path $PluginRoot $item.Target
     if (-not (Test-Path $target)) {
@@ -55,9 +68,16 @@ foreach ($item in $shortcuts) {
         continue
     }
 
+    $arguments = ""
+    if ($item.Name -eq "JOE" -and $pyw) {
+        $target = $pyw
+        $arguments = ('-X utf8 "{0}"' -f (Join-Path $PluginRoot "joe_main.py"))
+    }
+
     $linkPath = Join-Path $desktop ($item.Name + ".lnk")
     $link = $shell.CreateShortcut($linkPath)
     $link.TargetPath = $target
+    if ($arguments) { $link.Arguments = $arguments }
     $link.WorkingDirectory = $PluginRoot
     $link.Description = $item.Description
     $link.WindowStyle = 1
@@ -77,6 +97,13 @@ foreach ($item in $shortcuts) {
 ""
 foreach ($s in $skipped) { "  SKIPPED   $s" }
 "  {0} shortcut(s) on {1}" -f $made, $desktop
+if ($pyw) {
+    "  JOE opens with no console window (pyw at {0})" -f $pyw
+} else {
+    "  NOTE: no pyw.exe found on this machine, so the JOE shortcut goes"
+    "        through START_JOE.cmd and will flash a console window."
+    "        Install Python 3.10 or newer from python.org and run this again."
+}
 
 if ($made -eq 0) { exit 1 }
 exit 0

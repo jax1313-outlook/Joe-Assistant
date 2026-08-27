@@ -32,13 +32,17 @@ def _ps(script: str, timeout: int = 60) -> tuple[bool, str, str]:
             ["powershell", "-NoProfile", "-NonInteractive",
              "-ExecutionPolicy", "Bypass", "-Command", script],
             capture_output=True, text=True,
-                # Real mail carries characters PowerShell does not
-                # emit as clean UTF-8. Strict decoding raised
-                # UnicodeDecodeError inside the reader THREAD, which
-                # killed the read and surfaced as "Outlook returned
-                # nothing" - a live mailbox reported as unreadable
-                # because one subject line had an odd byte.
-                encoding="utf-8", errors="replace", timeout=timeout,
+            # Spoken text carries characters PowerShell does not emit as
+            # clean UTF-8. Strict decoding would raise inside the reader
+            # thread and surface as the speech engine being unavailable,
+            # when the only problem was one odd byte.
+            encoding="utf-8", errors="replace", timeout=timeout,
+            # Every route through this function - probe, speak, listen,
+            # synthesize - would otherwise flash a black console window.
+            # This one is the worst offender: speak() runs on every sentence
+            # JOE says, so without this the screen blinks each time it
+            # opens its mouth.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except FileNotFoundError:
         return False, "", "PowerShell was not found on this machine"

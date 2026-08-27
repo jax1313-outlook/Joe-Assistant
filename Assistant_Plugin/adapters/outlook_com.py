@@ -489,6 +489,10 @@ class OutlookComAdapter:
                 # because one subject line had an odd byte.
                 encoding="utf-8", errors="replace",
                 timeout=timeout or self.timeout_seconds,
+                # Without this, every Outlook read flashes a black console
+                # window on screen. Mike is driving; a window that appears and
+                # vanishes is a thing to look at and a thing to wonder about.
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except FileNotFoundError:
             return False, "", "PowerShell was not found on this machine"
