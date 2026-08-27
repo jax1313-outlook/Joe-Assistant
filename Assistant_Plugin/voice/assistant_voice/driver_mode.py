@@ -37,6 +37,15 @@ TOO_LONG_TO_READ_WORDS = MAX_SPOKEN_WORDS
 _URL = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 _BRACKETED_CITATION = re.compile(r"\[[^\]]*\]|\([^)]*(?:retrieved|source|ibid|p\.\s*\d+)[^)]*\)", re.IGNORECASE)
 _FOOTNOTE = re.compile(r"\[\^?\d+\]|\(\d+\)")
+# A file path read aloud is "slash Operations slash RATE underscore FLOOR
+# underscore POLICY dot M D". It is never the answer to anything asked at the
+# wheel, and it belongs on the screen that gets read parked. Both branches
+# require an extension, so ordinary prose like "and/or" is left alone.
+_FILE_PATH = re.compile(
+    r"(?:[\w.\-]+[/\\])+[\w.\-]*\.[A-Za-z0-9]{1,5}\b"
+    r"|\b[\w\-]+\.(?:md|txt|docx?|pdf|xlsx?|csv|json|html?|pptx?|ya?ml)\b",
+    re.IGNORECASE,
+)
 _WHITESPACE = re.compile(r"\s+")
 
 
@@ -45,8 +54,10 @@ class DriverModeError(ValueError):
 
 
 def strip_unspeakable(text: str) -> str:
-    """Remove what should never be read aloud: URLs, citations, footnotes."""
+    """Remove what should never be read aloud: URLs, file paths, citations,
+    footnotes."""
     cleaned = _URL.sub("", text or "")
+    cleaned = _FILE_PATH.sub("", cleaned)
     cleaned = _BRACKETED_CITATION.sub("", cleaned)
     cleaned = _FOOTNOTE.sub("", cleaned)
     cleaned = cleaned.replace("*", "").replace("#", "").replace("`", "")

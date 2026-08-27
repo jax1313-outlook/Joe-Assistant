@@ -227,6 +227,13 @@ class AssistantService(ReasoningCapabilities):
         if not request.text:
             raise ValueError("nothing was asked")
 
+        # "Explain more" is the rest of the answer Mike just heard, not a new
+        # question. It is settled before routing, because the router would
+        # treat "please" as a fresh request and send it to a capability.
+        expansion = self._expand_previous(request)
+        if expansion is not None:
+            return expansion
+
         chosen = route_request(request.text)
         request.driver_mode = chosen.driver_mode or self.driver_mode
 
@@ -283,6 +290,54 @@ class AssistantService(ReasoningCapabilities):
             record.record_id,
         )
         return interaction
+
+    def _expand_previous(self, request: AssistantRequest):
+        """The rest of the last answer, or None when this is a new question.
+
+        Like a retention command, this acts on an interaction Mike already has
+        instead of creating one: no memory record is written and the selection
+        does not move. If it moved, "explain more" would silently change which
+        record "save this" applies to."""
+        from .followup import is_expansion_request, rest_of
+
+        if not is_expansion_request(request.text):
+            return None
+
+        if not self.interactions:
+            nothing = "There is nothing to explain yet - ask me something first."
+            return Interaction(
+                record_id=self.selected_id or "",
+                request=request.text,
+                response=AssistantResponse(
+                    capability=Capability.HELP,
+                    answer=nothing, written=nothing,
+                    spoken_summary="There is nothing to explain yet.",
+                ),
+            )
+
+        previous = self.interactions[-1].response
+        remainder = rest_of(previous.written or previous.answer,
+                            previous.spoken_summary)
+        if not remainder:
+            remainder = "That was the whole answer."
+
+        self.log.event("expansion", request.text[:80], self.selected_id or "")
+
+        # The expansion is spoken in full. Mike asked for more; shortening it
+        # again would make him ask twice for one answer.
+        return Interaction(
+            record_id=self.selected_id or "",
+            request=request.text,
+            response=AssistantResponse(
+                capability=previous.capability,
+                answer=remainder,
+                written=remainder,
+                spoken_summary=remainder,
+                provenance=list(previous.provenance),
+                citations=list(previous.citations),
+                reasoning_mode=previous.reasoning_mode,
+            ),
+        )
 
     def _dispatch_capability(
         self, request: AssistantRequest, chosen: Route
@@ -384,6 +439,8 @@ class AssistantService(ReasoningCapabilities):
             for snippet in hit["snippets"][:2]:
                 body.append("     > " + snippet)
             body.append("")
+        from .followup import speakable_finding
+
         return AssistantResponse(
             capability=Capability.LIBRARY,
             answer=(
@@ -393,6 +450,10 @@ class AssistantService(ReasoningCapabilities):
                 + "/"
                 + top["relative_path"]
             ),
+            # The written answer names the file, because a file name is useful
+            # on a screen. The spoken answer says what the document says,
+            # because that is what was asked.
+            spoken_summary=speakable_finding(top["title"], top.get("snippets")),
             written="\n".join(body),
             findings=[h["title"] for h in hits],
             citations=[h["reference"] for h in hits],
@@ -1105,12 +1166,36 @@ class AssistantService(ReasoningCapabilities):
     ) -> AssistantResponse:
         from assistant_voice.driver_mode import check_length, prepare_for_speech
 
+        from .followup import first_sentence, is_too_long
+
         try:
             brief = prepare_for_speech(response.answer, "the written response above")
         except Exception:
             return response
         fits, _ = check_length(brief)
-        response.spoken_summary = brief.spoken_text() if fits else response.answer
+        spoken = brief.spoken_text() if fits else response.answer
+
+        # One sentence. The sixty-word form this used to speak is three or four
+        # sentences, and Mike asked for one - the rest is his to ask for, and
+        # detail he did not ask for is the load this program exists to remove.
+        # prepare_for_speech has already removed what cannot be spoken; this
+        # only decides where to stop. A sentence too long to hold is left
+        # whole rather than cut, because half a sentence about a rate is worse
+        # than a long one.
+        sentence = first_sentence(spoken)
+        if sentence and not is_too_long(sentence):
+            spoken = sentence
+
+        # A capability that chose its own spoken form knows better than a
+        # generic shortener what is worth hearing. AssistantResponse defaults
+        # the spoken form to the written answer, so "differs from answer" is
+        # what identifies a deliberate choice.
+        chosen_deliberately = (
+            (response.spoken_summary or "").strip()
+            != (response.answer or "").strip()
+        )
+        if not chosen_deliberately:
+            response.spoken_summary = spoken
         if driver_mode and brief.deferred:
             response.add_notice(
                 "Long result. The short spoken form defers to the written "
