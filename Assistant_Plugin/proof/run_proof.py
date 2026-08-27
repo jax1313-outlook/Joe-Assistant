@@ -174,7 +174,13 @@ def step_2_text_interaction(proof: Proof, service) -> str:
     proof.record(
         2,
         "Mike enters a request and a written response appears",
-        bool(response.answer) and bool(response.written),
+        # response.ok belongs here. Without it this step passed while the
+        # capability raised on every call: ask() catches the exception and
+        # returns "That capability failed" as the answer, with a written form
+        # explaining it, so "answer and written are non-empty" held. The step
+        # printed its own bad news - answer: That capability failed - and
+        # reported PASS underneath it.
+        response.ok and bool(response.answer) and bool(response.written),
         [
             "request             Find the rate floor policy",
             "routed to           " + response.capability,
@@ -473,20 +479,58 @@ def step_10_outlook(proof: Proof, service, enabled: bool) -> None:
 
 
 def step_11_research(proof: Proof, service) -> None:
+    """The label must match the mode - whichever mode research is in.
+
+    This step used to pass on `not probe["live_connection"] and labelled`, and
+    that is wrong twice over.
+
+    It cannot survive success. The title says "live OR fixture mode" while the
+    condition accepts only fixture, so the day a live research provider is
+    connected this fails for the wrong reason - and whoever is holding the
+    pager fixes it by weakening it. It is not hypothetical: on this machine
+    research.probe() already reports mode LIVE. The step passes only because
+    the suite isolates runtime_data, so the provider it would use is not
+    signed in inside the sandbox.
+
+    And it had no positive control - the same gap corrected in steps 14 and
+    15. A research provider that is simply broken also reports not-live, and
+    passed here.
+
+    Truthfulness is the claim in the title, so truthfulness is what is checked:
+    fixture output must say SAMPLE DATA, live output must not, and a provider
+    that is unavailable must say why rather than be reported as either.
+    """
     probe = service.research.probe()
     result = service.ask("Research the northbound lane").response
-    labelled = any("SAMPLE DATA" in n for n in result.notices)
+    mode = str(probe.get("mode", "")).upper()
+    live = bool(probe.get("live_connection"))
+    said_sample = (any("SAMPLE DATA" in n for n in result.notices)
+                   or "SAMPLE DATA" in (result.written or "").upper())
+
+    if live:
+        truthful = (mode == "LIVE") and not said_sample
+        expected = "live, and not labelled sample"
+    else:
+        truthful = (mode != "LIVE") and said_sample
+        expected = "not live, and labelled SAMPLE DATA"
+
+    # An unavailable provider must name its blocker. Silence would let a
+    # broken provider be reported as an ordinary fixture run.
+    coherent = bool(probe.get("available")) or bool(probe.get("blocker"))
+
     proof.record(
         11,
         "Research status truthfully shows live or fixture mode",
-        not probe["live_connection"] and labelled,
+        truthful and coherent,
         [
             "provider            " + probe["provider"],
-            "live_connection     " + str(probe["live_connection"]),
-            "mode                " + probe["mode"] + "  (SAMPLE DATA)",
-            "blocker             " + probe["blocker"][:70],
-            "labelled in output  " + str(labelled),
-            "presented as live   no",
+            "live_connection     " + str(live),
+            "mode                " + probe["mode"],
+            "available           " + str(probe.get("available")),
+            "blocker             " + (probe["blocker"][:70] or "(none)"),
+            "labelled SAMPLE     " + str(said_sample),
+            "required            " + expected,
+            "unavailable states why  " + str(coherent),
         ],
     )
 
@@ -1119,6 +1163,17 @@ def step_21_accounts(proof: Proof, service, enabled: bool) -> None:
     in_use = service.outlook.account_in_use()
     result = service.outlook.calendar(date_range=None)
 
+    # Designating a mailbox means nothing unless the designated one is the one
+    # read. When none is designated, JOE uses Outlook's default store and says
+    # so - there is nothing to honour, and nothing to check.
+    designated = (service.outlook.account or "").strip()
+
+    def _matches(value) -> bool:
+        return str(value or "").strip().lower() == designated.lower()
+
+    designation_honoured = (not designated) or (
+        _matches(in_use) and (not result.ok or _matches(result.account)))
+
     # What each mailbox actually holds. One configured account covers all three
     # folders, so a mailbox that holds mail but no calendar answers calendar
     # questions with silence - truthfully, and unhelpfully. This records which
@@ -1153,7 +1208,13 @@ def step_21_accounts(proof: Proof, service, enabled: bool) -> None:
     proof.record(
         21,
         "The Outlook account in use is designated and reported",
-        bool(accounts) and bool(in_use) and bool(result.account),
+        # Three non-empty strings used to satisfy this, which asserts nothing
+        # about the claim in the title. A build that ignored the designation
+        # entirely and read whichever mailbox it liked passed, provided it
+        # reported something. The designation is now checked against what was
+        # actually used - which is the whole point of designating one.
+        bool(accounts) and bool(in_use) and bool(result.account)
+        and designation_honoured,
         [
             "accounts found      " + str(len(accounts)),
             *[
@@ -1164,6 +1225,9 @@ def step_21_accounts(proof: Proof, service, enabled: bool) -> None:
             "in use              " + in_use,
             "reported on read    " + (result.account or "(none)"),
             "designation         set outlook.account in configuration",
+            "designation honoured  " + str(designation_honoured)
+            + ("" if designation_honoured else
+               "   -> designated " + designated + ", used " + in_use),
             "",
             "approved mailboxes  (Mike, final)",
             *[
