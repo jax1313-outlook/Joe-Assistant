@@ -22,6 +22,9 @@ if (-not (Test-Path $desktop)) {
 # generic script file. imageres.dll is present on every supported build.
 $iconLibrary = Join-Path $env:SystemRoot "System32\imageres.dll"
 
+# Three icons, not four. MIC_TEST already lists every recording device, so a
+# separate Microphone List icon was a second way to do part of the same job -
+# and an extra icon is one more thing to read past on a desktop.
 $shortcuts = @(
     @{ Name = "JOE";
        Target = "START_JOE.cmd";
@@ -31,18 +34,18 @@ $shortcuts = @(
     @{ Name = "JOE Microphone Test";
        Target = "launchers\MIC_TEST.cmd";
        Icon = 168;
-       Description = "Check which microphone JOE can hear, and test it" },
+       Description = "Which microphone JOE hears, and whether it understands you" },
 
-    @{ Name = "JOE Microphone List";
-       Target = "launchers\MIC_LIST.cmd";
-       Icon = 24;
-       Description = "Which microphone JOE can hear - no speaking required" },
-
-    @{ Name = "JOE Settings and Status";
+    @{ Name = "JOE Status";
        Target = "launchers\JOE_STATUS.cmd";
        Icon = 109;
-       Description = "What JOE is connected to right now" }
+       Description = "What JOE is connected to right now, and what it is not" }
 )
+
+# Names this script has used before. Removed on every run so a rename leaves
+# nothing orphaned on the desktop. Only names this script itself created are
+# ever touched - nothing else on the desktop is read, moved, or deleted.
+$retired = @("JOE Microphone List", "JOE Settings and Status")
 
 $shell = New-Object -ComObject WScript.Shell
 $made = 0
@@ -101,6 +104,15 @@ function Find-RealPythonw {
 
 $pyw = Find-RealPythonw
 
+# Clear retired names first, so a rename never leaves a dead icon behind.
+foreach ($name in $retired) {
+    $old = Join-Path $desktop ($name + ".lnk")
+    if (Test-Path $old) {
+        Remove-Item $old -Force -ErrorAction SilentlyContinue
+        "  removed   {0}  (retired)" -f $name
+    }
+}
+
 foreach ($item in $shortcuts) {
     $target = Join-Path $PluginRoot $item.Target
     if (-not (Test-Path $target)) {
@@ -126,9 +138,18 @@ foreach ($item in $shortcuts) {
     }
     $link.Save()
 
+    # Read the shortcut back and confirm it resolves to something that exists.
+    # A .lnk saves happily whether or not its target is real, so writing one is
+    # not evidence that clicking it will do anything.
     if (Test-Path $linkPath) {
-        "  created   {0}" -f $item.Name
-        $made++
+        $check = $shell.CreateShortcut($linkPath)
+        if (Test-Path $check.TargetPath) {
+            "  created   {0}" -f $item.Name
+            $made++
+        } else {
+            $skipped += ("{0}  (points at a missing {1})" -f $item.Name,
+                         $check.TargetPath)
+        }
     } else {
         $skipped += ("{0}  (could not be written)" -f $item.Name)
     }
