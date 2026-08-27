@@ -7,6 +7,29 @@
 
 ---
 
+---
+
+## Status: closed
+
+All seven items were corrected on the day of the audit, each verified by
+planting the fault it was blind to and confirming the proof fails.
+
+| | Fault planted | Result |
+| --- | --- | --- |
+| D1 | Approval setter, Manager class, provider SDK outside adapters, polling loop | all four caught, each named |
+| D2 | Library capability raising on every call | caught |
+| D3 | A draft returned with no label | caught |
+| D4 | Research reporting LIVE while its output says SAMPLE | caught |
+| D5 | A mailbox in use that is not the designated one | caught |
+| W1 | Search results with the source labels stripped | caught |
+| W2 | A preserved record lost, and a record reappearing | both caught |
+
+Two claims in D1 were removed rather than made real: "Assistant not required to
+run Dispatch" and "No Assistant code copied into Dispatch" are facts about the
+Dispatch repository, and this suite runs inside JOE and cannot see it.
+
+---
+
 ## Why this audit exists
 
 Four proofs were examined earlier the same day, for an unrelated reason. All
