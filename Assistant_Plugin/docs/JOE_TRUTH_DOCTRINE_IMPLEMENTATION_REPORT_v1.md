@@ -16,6 +16,11 @@
 Everything below was observed in a run against that commit. Nothing is
 asserted from design intent.
 
+The package is a build artifact and is **not tracked in git** (`.gitignore`
+line 29). That is why it is bound here by content digest rather than by commit:
+rebuild it from this commit with `Deployment\PACKAGE_JOE.cmd` and the 163 files
+should carry the same digest.
+
 ---
 
 ## 1. The defect, in one line
