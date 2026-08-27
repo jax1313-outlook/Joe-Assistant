@@ -157,10 +157,27 @@ class AssistantService(ReasoningCapabilities):
             preferred=str(voice_cfg.get("preferred_microphone", "")),
             logger=lambda event, detail: self.log.write(event, "-", detail),
         )
+        # Hearing and speaking are separate choices. System.Speech speaks well
+        # and hears badly: it cannot be bound to a named microphone, and on a
+        # Bluetooth headset it returned no correct words at all. Whisper can be
+        # pointed at a device and handles the narrowband audio a headset sends.
+        recognizer = None
+        if str(voice_cfg.get("recognizer", "windows")).strip().lower() == "whisper":
+            from adapters.whisper_listen import WhisperListener
+
+            whisper_cfg = voice_cfg.get("whisper") or {}
+            recognizer = WhisperListener(
+                model=str(whisper_cfg.get("model", "")),
+                device=str(voice_cfg.get("preferred_microphone", "")),
+                compute_type=str(whisper_cfg.get("compute_type", "")),
+                enabled=bool(voice_cfg.get("enabled", True)),
+            )
+
         self.voice = SapiVoiceAdapter(
             enabled=bool(voice_cfg.get("enabled", True)),
             voice_name=str(voice_cfg.get("voice_name", "")),
             rate=int(voice_cfg.get("rate", 0)),
+            recognizer=recognizer,
         )
         self.speak_replies = bool(voice_cfg.get("speak_replies", False))
         self.driver_mode = bool(voice_cfg.get("driver_mode", False))

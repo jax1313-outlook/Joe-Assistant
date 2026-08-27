@@ -82,7 +82,7 @@
     "allow_fixture_mode": true
   },
   "voice": {
-    "_comment": "Windows System.Speech. speak_replies=false means JOE never speaks unless you press Speak.",
+    "_comment": "Speaking and hearing are separate choices. JOE speaks through Windows System.Speech, which does it well. It hears through whichever recognizer is named below. speak_replies=false means JOE never speaks unless you press Speak.",
     "enabled": true,
     "speak_replies": false,
     "voice_name": "",
@@ -90,7 +90,13 @@
     "driver_mode": false,
     "max_spoken_words": 60,
     "preferred_microphone": "",
-    "_microphone_comment": "Leave preferred_microphone empty to use the Windows default recording device - that is the normal setting and needs no configuration. JOE records from the Windows default; Windows Speech Recognition offers no way to bind to a chosen device, so a name here is remembered and reported, not enforced. If it does not match the Windows default, JOE says so rather than pretending to have switched."
+    "_microphone_comment": "preferred_microphone names the device JOE records from. With the whisper recognizer this is enforced, not just remembered - JOE binds to that device by name. Leave it empty to follow the Windows default. Windows spells the same headset several ways, so a partial name matches; JOE reports the exact device it settled on.",
+    "recognizer": "whisper",
+    "whisper": {
+      "_comment": "Local speech recognition. Nothing is sent anywhere - the model runs on this machine, which is also why it keeps working with no signal. It can be pointed at a named microphone, which Windows System.Speech cannot: on Mike's Bluetooth headset that engine returned no correct words at all, because a headset drops to narrowband when it records. model: tiny, base, small, medium or large-v3 - larger is more accurate and slower, and base is as far as a 2018 laptop CPU should go. compute_type int8 suits a CPU; use float16 on a machine with a GPU. The first run downloads the model and needs a network.",
+      "model": "base",
+      "compute_type": "int8"
+    }
   },
   "dispatch": {
     "_comment": "No approved Dispatch interface exists on this machine. The port is defined; nothing is connected. Do not point this at Dispatch internals.",

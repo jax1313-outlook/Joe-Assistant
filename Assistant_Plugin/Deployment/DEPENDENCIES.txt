@@ -27,6 +27,24 @@ THIRD-PARTY PYTHON PACKAGES
 
   Verified here: anthropic 1.1.0
 
+  Required ONLY for local speech recognition (the whisper recognizer):
+
+    faster-whisper    speech recognition that runs on this machine
+    sounddevice       records from a NAMED microphone
+
+  Install:
+    py -m pip install --user faster-whisper sounddevice
+
+  Verified here: faster-whisper 1.2.1, sounddevice 0.5.6
+
+  The first run downloads the model (base is about 150 MB) and needs a
+  network. After that it runs offline - nothing is sent anywhere, which is
+  also why it keeps working with no signal.
+
+  WITHOUT THEM JOE still speaks, and still hears through Windows
+  System.Speech. That engine cannot be pointed at a microphone, and on a
+  Bluetooth headset it returned no correct words at all.
+
   The API key is NOT stored anywhere in this package. The SDK reads it from
   the ANTHROPIC_API_KEY environment variable; JOE only ever checks whether one
   is present.

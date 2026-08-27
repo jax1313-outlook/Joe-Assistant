@@ -91,11 +91,16 @@ class SapiVoiceAdapter:
         voice_name: str = "",
         rate: int = 0,
         timeout_seconds: int = 60,
+        recognizer=None,
     ) -> None:
         self.enabled = enabled
         self.voice_name = voice_name or ""
         self.rate = max(-10, min(10, int(rate)))
         self.timeout_seconds = timeout_seconds
+        # An optional replacement for the hearing half only. Speaking stays
+        # with System.Speech, which does it well; hearing does not, and cannot
+        # be pointed at a microphone.
+        self.recognizer = recognizer
         self._probe: dict | None = None
         self.last_error = ""
         self.spoken_count = 0
@@ -232,7 +237,16 @@ class SapiVoiceAdapter:
 
         Requires a person to speak. An automated run cannot prove this, so the
         result always records whether real audio input was involved.
+
+        When a recognizer has been attached, it is used instead of Windows
+        System.Speech. That is not a preference: System.Speech cannot bind to a
+        named microphone, and on Mike's Bluetooth headset it returned no
+        correct words at all. Speaking still goes through System.Speech, which
+        does that part perfectly well.
         """
+        if self.recognizer is not None:
+            return self.recognizer.listen(seconds)
+
         probe = self.probe()
         if not probe.get("stt_engine_available"):
             return {
