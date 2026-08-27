@@ -317,6 +317,17 @@ def step_8_delete(proof: Proof, service) -> None:
 
 
 def step_9_library(proof: Proof, service) -> None:
+    """A search returns matches, and every match says where it came from.
+
+    "correctly labelled" is in the title and used to be tested nowhere: the
+    condition was `probe["available"] and bool(result.findings)`. Results could
+    have come back with no label at all, or with sample material wearing a
+    COMPANY LIBRARY tag, and this still reported PASS. The labelling is the
+    whole reason a driver can trust a quote from the Library, so it is the
+    thing to check.
+    """
+    import re as _re
+
     probe = service.library.probe()
     result = service.ask("Find the dispatch constitution").response
     company = [p for p in result.provenance if p.mode == SourceMode.LIVE]
@@ -324,16 +335,37 @@ def step_9_library(proof: Proof, service) -> None:
         s["name"] + " (" + s["kind"] + ", " + str(s["indexed"]) + " docs, " + s["mode"] + ")"
         for s in probe["sources"]
     ]
+
+    # Every hit carries a label in the text Mike reads.
+    written = result.written or ""
+    labels = _re.findall(r"\[(COMPANY LIBRARY|SAMPLE DATA)\]", written)
+    all_labelled = bool(labels) and len(labels) == len(result.findings)
+
+    # And the labels agree with where the material actually came from.
+    # Provenance covers the top hits only, so this is one-directional: every
+    # kind of source that was read must appear in the labels shown.
+    shown = set(labels)
+    read = set()
+    if any(p.mode == SourceMode.SAMPLE for p in result.provenance):
+        read.add("SAMPLE DATA")
+    if company:
+        read.add("COMPANY LIBRARY")
+    honest = read <= shown
+
     proof.record(
         9,
         "Library search returns a configured source, correctly labelled",
-        probe["available"] and bool(result.findings),
+        probe["available"] and bool(result.findings) and all_labelled and honest,
         [
             "configured sources  " + str(len(probe["sources"])),
             *["  - " + s for s in sources],
             "total indexed       " + str(probe["indexed"]),
             "live company source " + str(probe["live_connection"]),
             "matches returned    " + str(len(result.findings)),
+            "labels shown        " + str(len(labels)) + " of "
+            + str(len(result.findings)) + "  " + str(sorted(shown)),
+            "sources read        " + str(sorted(read) or ["(none)"]),
+            "labels agree        " + str(honest),
             "company-sourced hit " + str(bool(company)),
             "top result          " + result.answer[:70],
         ],
@@ -572,21 +604,43 @@ def step_12_voice(proof: Proof, service, speak: bool) -> None:
 
 
 def step_13_restart(proof: Proof, service, root: Path) -> None:
-    saved = [r for r in service.history() if r["state"] != "TEMPORARY"]
+    """The same records survive a restart - checked by identity, not by count.
+
+    This compared counts: `len(kept) >= len(saved) > 0`. Two faults slip
+    through that. A record deleted before the restart could come back, and the
+    count would only rise - which `>=` accepts. And a preserved record could be
+    swapped for a different one, leaving the count unchanged. Neither is
+    hypothetical for a program whose whole retention model is which record
+    survives and which expires: step 8 deletes a record immediately before
+    this, and its return would be invisible here.
+
+    Record ids are compared instead. Nothing lost, nothing gained.
+    """
+    ELIGIBLE = ("SAVED", "FORMAL", "PRINT_READY")
+    before = {r["record_id"] for r in service.history() if r["state"] in ELIGIBLE}
     service.shutdown()
     second = make_service(root, outlook=False)
     restored = second.reload_history()
     rows = second.history()
-    kept = [r for r in rows if r["state"] in ("SAVED", "FORMAL", "PRINT_READY")]
+    kept = [r for r in rows if r["state"] in ELIGIBLE]
+    after = {r["record_id"] for r in kept}
+
+    lost = sorted(before - after)
+    gained = sorted(after - before)
+    identical = bool(before) and not lost and not gained
+
     proof.record(
         13,
         "Closing and reopening preserves eligible records",
-        restored > 0 and len(kept) >= len(saved) > 0,
+        restored > 0 and identical,
         [
-            "records before      " + str(len(saved)) + " preserved",
+            "records before      " + str(len(before)) + " preserved",
             "service restarted   yes (new AssistantService over the same data)",
             "records restored    " + str(restored),
-            "preserved after     " + str(len(kept)),
+            "preserved after     " + str(len(after)),
+            "same records        " + str(identical) + "  (compared by id)",
+            "lost                " + (", ".join(lost) if lost else "none"),
+            "returned unexpectedly  " + (", ".join(gained) if gained else "none"),
             "states              " + ", ".join(sorted({r["state"] for r in kept})),
         ],
     )
