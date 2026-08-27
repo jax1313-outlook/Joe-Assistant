@@ -20,6 +20,7 @@ Mode exists to avoid.
 Run:   launchers\\MIC_TEST.cmd
    or: py proof\\prove_microphone.py            (diagnostics + live test)
        py proof\\prove_microphone.py --list     (diagnostics only)
+       py proof\\prove_microphone.py --say "JOE send it now"
 
 Writes evidence to proof\\MICROPHONE_PROOF.md. No raw audio is retained.
 """
@@ -35,7 +36,13 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PLUGIN_ROOT))
 
 DIVIDER = "=" * 74
-TEST_PHRASE = "Joe can you hear me through the headset"
+DEFAULT_PHRASE = "Joe can you hear me through the headset"
+
+# The phrase under test. Overridable with --say "..." because the sentence that
+# matters most is not this one - it is the authorisation phrase from Amendment
+# 1, "JOE, send it now", and that has to be proven against road noise in the
+# cab rather than a test line in a quiet room.
+TEST_PHRASE = DEFAULT_PHRASE
 PASS_THRESHOLD = 0.5
 
 
@@ -205,6 +212,13 @@ def _overlap(expected: str, heard: str) -> float:
 def main() -> int:
     from app.config import Config
     from app.service import AssistantService
+
+    global TEST_PHRASE
+    if "--say" in sys.argv:
+        position = sys.argv.index("--say") + 1
+        spoken = " ".join(sys.argv[position:]).strip().strip('"')
+        if spoken:
+            TEST_PHRASE = spoken
 
     list_only = "--list" in sys.argv
     print(DIVIDER)
