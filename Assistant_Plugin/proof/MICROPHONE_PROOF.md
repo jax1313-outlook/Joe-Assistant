@@ -1,6 +1,6 @@
 # JOE - Microphone Test and Diagnostics
 
-**Run:** 2026-08-27T16:42:04+00:00
+**Run:** 2026-08-27T16:54:09+00:00
 
 No raw audio is retained. Only recognized text and outcomes.
 
@@ -8,7 +8,7 @@ No raw audio is retained. Only recognized text and outcomes.
 
 | | |
 | --- | --- |
-| Device in use | Internal Microphone |
+| Device in use | Headset |
 | Status | connected and available |
 | Preference | (none - Windows default) |
 | Preference honoured | True |
@@ -22,19 +22,11 @@ No raw audio is retained. Only recognized text and outcomes.
 | Device | Status | Notes |
 | --- | --- | --- |
 | Stereo Mix | disabled in Windows | loopback - never used, it would hear JOE's own output |
-| Internal Microphone | connected and available | **JOE records from this one** |
+| Internal Microphone | connected and available | - |
 | Line In | not connected | - |
 | External Microphone | not connected | - |
-| Headset | connected and available | bluetooth |
+| Headset | connected and available | **JOE records from this one**, bluetooth |
 
 ## Live test
 
-**PASS - JOE heard Mike, and did not hear itself.**
-
-| | |
-| --- | --- |
-| Device | Internal Microphone |
-| Expected phrase | Joe can you hear me through the headset |
-| Recognized text | Hear me through the headset |
-| Word match | 62% |
-| JOE heard itself | False |
+Diagnostics only. No speech was attempted.

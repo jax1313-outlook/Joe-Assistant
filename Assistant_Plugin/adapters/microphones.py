@@ -67,7 +67,43 @@ foreach ($key in Get-ChildItem '__CAPTURE__') {
     $rows += [ordered]@{ name = [string]$name; state = [int]$state; id = $key.PSChildName }
   }
 }
-[ordered]@{ ok = $true; devices = $rows } | ConvertTo-Json -Depth 4 -Compress
+# WHICH ONE IS DEFAULT. The registry lists endpoints in GUID order, which has
+# nothing to do with which Windows will use. Only the MMDevice API knows, so it
+# is asked - the same call System.Speech makes when it binds to the default
+# input. Both roles are read: Windows keeps a Default Device and a separate
+# Default Communication Device, and a headset is commonly one and not the other.
+$default = $null; $comms = $null
+try {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceEnumerator { int NotImpl1();
+  int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice); }
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDevice { int Activate(ref Guid iid, int c, IntPtr p, out IntPtr i);
+  int OpenPropertyStore(int a, out IPropertyStore ps);
+  int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id); }
+[Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IPropertyStore { int GetCount(out int c); int GetAt(int i, out PK k);
+  int GetValue(ref PK key, out PV pv); }
+[StructLayout(LayoutKind.Sequential)] struct PK { public Guid fmtid; public int pid; }
+[StructLayout(LayoutKind.Explicit)] struct PV { [FieldOffset(0)] public short vt;
+  [FieldOffset(8)] public IntPtr p; }
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class Enumr { }
+public class Aud { public static string D(int role) {
+  var e = (IMMDeviceEnumerator)(new Enumr()); IMMDevice d;
+  if (e.GetDefaultAudioEndpoint(1, role, out d) != 0) return null;
+  IPropertyStore s; d.OpenPropertyStore(0, out s);
+  var k = new PK(); k.fmtid = new Guid("a45c254e-df1c-4efd-8020-67d146a850e0");
+  k.pid = 14; PV v; s.GetValue(ref k, out v);
+  return Marshal.PtrToStringUni(v.p); } }
+'@ -ErrorAction Stop
+  $default = [Aud]::D(0)
+  $comms = [Aud]::D(2)
+} catch { }
+[ordered]@{ ok = $true; devices = $rows; default_name = $default;
+            communications_name = $comms } | ConvertTo-Json -Depth 4 -Compress
 """
 
 
@@ -111,6 +147,10 @@ class Microphone:
 class MicrophoneReport:
     ok: bool = False
     devices: list = field(default_factory=list)
+    # What Windows answers when asked which endpoint is default. Empty when
+    # the question could not be asked, which is reported rather than guessed.
+    default_name: str = ""
+    communications_name: str = ""
     error: str = ""
     preferred: str = ""
 
@@ -122,12 +162,43 @@ class MicrophoneReport:
     def in_use(self):
         """What JOE will actually record from.
 
-        Windows exposes one active capture endpoint at a time; that is the
-        default device, and the only one System.Speech can bind to.
+        System.Speech binds to the Windows DEFAULT capture endpoint, so that is
+        the only correct answer here.
+
+        This used to return the first available device in registry order and
+        call it the default. Registry order is GUID order and means nothing.
+        The two agreed on a machine with one microphone and diverged the moment
+        Mike set a Bluetooth headset as his default input: JOE recorded from
+        the headset and reported the internal microphone, so a failing test
+        looked like it had been run against hardware it never touched. A
+        diagnostic that names the wrong device is worse than no diagnostic.
         """
+        for name in (self.default_name, self.communications_name):
+            if not name:
+                continue
+            for device in self.available:
+                if _matches(device.name, name):
+                    return device
+        # Windows did not answer, or named an endpoint not in this list. Fall
+        # back to the first available device - reporting no microphone when one
+        # is plainly connected would be a worse lie than an imprecise one - and
+        # let `default_resolved` tell the caller this was a fallback, so the
+        # uncertainty is shown rather than hidden.
         for device in self.available:
             return device
         return None
+
+    @property
+    def default_resolved(self) -> bool:
+        """Did Windows actually name the default capture endpoint?
+
+        False means `in_use` is a best guess, and anything reported from it
+        should say so."""
+        if not (self.default_name or self.communications_name):
+            return False
+        return any(_matches(d.name, n)
+                   for n in (self.default_name, self.communications_name) if n
+                   for d in self.available)
 
     @property
     def preference_honoured(self) -> bool:
@@ -222,7 +293,11 @@ class MicrophoneAdapter:
                        device_id=str(r.get("id", "")))
             for r in rows if r.get("name")
         ]
-        report = MicrophoneReport(ok=True, devices=devices, preferred=self.preferred)
+        report = MicrophoneReport(
+            ok=True, devices=devices, preferred=self.preferred,
+            default_name=str(payload.get("default_name") or ""),
+            communications_name=str(payload.get("communications_name") or ""),
+        )
         self.last_error = ""
         current = report.in_use
         self._log("microphone_selected",
@@ -241,6 +316,10 @@ class MicrophoneAdapter:
         return {
             "ok": report.ok,
             "in_use": current.name if current else "",
+            # False means Windows did not name a default and the device
+            # above is a best guess. Shown, not swallowed.
+            "default_resolved": report.default_resolved,
+            "windows_default": report.default_name,
             "in_use_status": current.status if current else "no device connected",
             "preferred": self.preferred,
             "preference_honoured": report.preference_honoured,
