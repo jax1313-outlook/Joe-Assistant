@@ -6,7 +6,7 @@
     "sweep_on_access": true
   },
   "reasoning": {
-    "_comment": "The reasoning provider. 'none' means JOE cannot compose answers and says so. Supported: none, m365_copilot, ollama, openai_compatible. NO CREDENTIAL IS EVER STORED HERE. Microsoft 365 Copilot signs in through MSAL; the token lives in an encrypted Windows cache. tenant_id and client_id are not secrets, but they identify the organisation, so they live in environment variables rather than in this tracked file - see reasoning.copilot below.",
+    "_comment": "The reasoning provider. 'none' means JOE cannot compose answers and says so. Supported: none, claude, m365_copilot, ollama, openai_compatible. NO CREDENTIAL IS EVER STORED HERE. Claude reads ANTHROPIC_API_KEY from the environment; Microsoft 365 Copilot signs in through MSAL and the token lives in an encrypted Windows cache. Copilot answered in 6.6 and 9.9 seconds on this machine, which is too slow to talk to while driving, and its Chat API is a /beta endpoint Microsoft states is not supported for production use.",
     "provider": "m365_copilot",
     "model": "",
     "endpoint": "",
@@ -19,6 +19,13 @@
       "time_zone": "America/New_York",
       "web_enabled_default": false,
       "timeout_seconds": 120
+    },
+    "claude": {
+      "_comment": "Claude, through Anthropic's official SDK. The API key is read from the ANTHROPIC_API_KEY environment variable and never appears in this file. fast_mode runs the same model at up to 2.5x the output speed for double the token price - latency is the point for a driver, so it is on by default; set it false to halve the cost and accept a slower answer. effort controls how hard the model thinks: 'low' suits a question asked at the wheel, 'high' suits drafting a rate negotiation.",
+      "model": "claude-opus-5",
+      "fast_mode": true,
+      "effort": "low",
+      "timeout_seconds": 30
     }
   },
   "library": {

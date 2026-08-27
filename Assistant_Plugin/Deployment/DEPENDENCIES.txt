@@ -18,6 +18,19 @@ THIRD-PARTY PYTHON PACKAGES
 
   Verified here: msal 1.38.0, msal-extensions 1.3.1
 
+  Required ONLY for the Claude reasoning provider:
+
+    anthropic         Anthropic's official Python SDK
+
+  Install:
+    py -m pip install --user anthropic
+
+  Verified here: anthropic 1.1.0
+
+  The API key is NOT stored anywhere in this package. The SDK reads it from
+  the ANTHROPIC_API_KEY environment variable; JOE only ever checks whether one
+  is present.
+
   WITHOUT THEM the Assistant still runs. Reasoning reports
   REASONING NOT CONFIGURED and every local capability - Library,
   Outlook, voice, memory, retention - keeps working.

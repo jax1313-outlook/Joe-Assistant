@@ -190,6 +190,19 @@ class AssistantService(ReasoningCapabilities):
                 web_enabled=bool(copilot_cfg.get("web_enabled_default", False)),
                 max_context_chars=int(reasoning_cfg.get("max_context_chars", 12000)),
             )
+        elif provider_name == "claude":
+            from adapters.claude_provider import ClaudeProvider
+
+            claude_cfg = reasoning_cfg.get("claude") or {}
+            # No credential is passed in. The SDK reads ANTHROPIC_API_KEY from
+            # the environment itself, so the key never travels through JOE.
+            backend = ClaudeProvider(
+                model=str(claude_cfg.get("model", "")),
+                fast=bool(claude_cfg.get("fast_mode", True)),
+                effort=str(claude_cfg.get("effort", "low")),
+                timeout_seconds=int(claude_cfg.get("timeout_seconds", 30)),
+                max_context_chars=int(reasoning_cfg.get("max_context_chars", 12000)),
+            )
         self.reasoning = ReasoningProviderAdapter(
             provider=provider_name,
             model=str(reasoning_cfg.get("model", "")),
