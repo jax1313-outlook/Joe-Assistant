@@ -33,7 +33,8 @@ from __future__ import annotations
 import os
 
 from .reasoning_provider import (Answer, ReasoningProvider, ReasoningStatus,
-                                 SYSTEM_FRAMING, TASK_FRAMING)
+                                 SYSTEM_FRAMING, TASK_FRAMING,
+                                 framing_for)
 
 CREDENTIAL_ENV = "ANTHROPIC_API_KEY"
 
@@ -160,25 +161,25 @@ class ClaudeProvider(ReasoningProvider):
 
     # ---- the contract --------------------------------------------------
 
-    def answer(self, question, context="", sources=None) -> Answer:
-        return self._run("answer", question, context, sources)
+    def answer(self, question, context="", sources=None, **options) -> Answer:
+        return self._run("answer", question, context, sources, **options)
 
-    def summarize(self, material, sources=None) -> Answer:
-        return self._run("summarize", "Summarize this.", material, sources)
+    def summarize(self, material, sources=None, **options) -> Answer:
+        return self._run("summarize", "Summarize this.", material, sources, **options)
 
-    def explain(self, material, question="", sources=None) -> Answer:
+    def explain(self, material, question="", sources=None, **options) -> Answer:
         return self._run(
             "explain", question or "Explain this in plain language.",
-            material, sources)
+            material, sources, **options)
 
-    def draft(self, instruction, context="", sources=None) -> Answer:
-        return self._run("draft", instruction, context, sources)
+    def draft(self, instruction, context="", sources=None, **options) -> Answer:
+        return self._run("draft", instruction, context, sources, **options)
 
-    def recommend(self, question, context="", sources=None) -> Answer:
-        return self._run("recommend", question, context, sources)
+    def recommend(self, question, context="", sources=None, **options) -> Answer:
+        return self._run("recommend", question, context, sources, **options)
 
-    def procedure(self, question, context="", sources=None) -> Answer:
-        return self._run("procedure", question, context, sources)
+    def procedure(self, question, context="", sources=None, **options) -> Answer:
+        return self._run("procedure", question, context, sources, **options)
 
     # ---- the call ------------------------------------------------------
 
@@ -204,7 +205,7 @@ class ClaudeProvider(ReasoningProvider):
             body += ["", "SOURCES", "\n".join("- " + s for s in named)]
         return "\n".join(body)
 
-    def _run(self, task, instruction, context, sources) -> Answer:
+    def _run(self, task, instruction, context, sources, **options) -> Answer:
         if not self.configured:
             return self._unavailable(
                 task, "no API key is set in " + CREDENTIAL_ENV)
@@ -213,7 +214,8 @@ class ClaudeProvider(ReasoningProvider):
         except RuntimeError as error:
             return self._unavailable(task, str(error))
 
-        system = SYSTEM_FRAMING
+        # Source rule by truth class; authority rule unconditional.
+        system = framing_for(options.get("truth_class"))
         framing = TASK_FRAMING.get(task, "")
         if framing:
             system = system + " " + framing

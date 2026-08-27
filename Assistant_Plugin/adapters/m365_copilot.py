@@ -46,6 +46,7 @@ from .m365_copilot_auth import AuthState, CopilotAuth
 from .reasoning_provider import (
     SYSTEM_FRAMING,
     TASK_FRAMING,
+    framing_for,
     Answer,
     ReasoningProvider,
     ReasoningStatus,
@@ -372,7 +373,10 @@ class M365CopilotProvider(ReasoningProvider):
             )
         prompt = "\n".join(
             [
-                SYSTEM_FRAMING,
+                # The source rule depends on which truth class was
+                # asked for. The authority rule inside framing_for()
+                # does not, and never varies.
+                framing_for(options.get("truth_class")),
                 "",
                 TASK_FRAMING.get(task, TASK_FRAMING["answer"]),
                 "",
@@ -423,10 +427,16 @@ class M365CopilotProvider(ReasoningProvider):
     def procedure(self, question: str, context: str = "", sources=None, **options) -> Answer:
         return self._run("procedure", question, context, sources, **options)
 
-    def research(self, question: str, context: str = "", sources=None) -> Answer:
-        """Web-grounded research. The only path that turns web search on."""
+    def research(self, question: str, context: str = "", sources=None, **options) -> Answer:
+        """Web-grounded research. The path that turns web search on.
+
+        truth_class defaults to LIVE rather than being demanded of the caller:
+        everything arriving through research() is, by definition, a question
+        whose answer may have changed since the model was trained.
+        """
+        options.setdefault("truth_class", "LIVE")
         return self._run(
-            "recommend", question, context, sources, web_enabled=True
+            "recommend", question, context, sources, web_enabled=True, **options
         )
 
     # ---- provenance ---------------------------------------------------

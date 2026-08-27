@@ -67,15 +67,84 @@ DEFAULT_ENDPOINT = {
 
 # What JOE asks a provider to do. The system framing travels with
 # every call so the boundary does not depend on the caller remembering it.
-SYSTEM_FRAMING = (
+#
+# This used to be one paragraph carrying two unrelated things: what JOE may not
+# DECIDE, and where JOE may get facts. They are now separate, because they were
+# never the same rule and merging them cost JOE its general knowledge.
+#
+# The authority half is unchanged and unconditional. It travels with every
+# call, in every truth class, forever.
+AUTHORITY_FRAMING = (
     "You assist a truck owner-operator. Answer the immediate question first, in "
     "one or two sentences, then any detail. Be direct and operational. "
-    "Use only the CONTEXT supplied; if the context does not contain the answer, "
-    "say so plainly rather than guessing. Never claim to have read a system you "
-    "were not given context from. Separate fact from inference, and state "
-    "uncertainty when it exists. You may recommend. You may not approve, decide, "
-    "or state that any action has been taken."
+    "Never claim to have read a system you were not given context from. "
+    "Separate fact from inference, and state uncertainty when it exists. "
+    "You may recommend. You may not approve, decide, or state that any action "
+    "has been taken."
 )
+
+# The source half depends on what kind of truth was asked for. Doctrine v1.0
+# section 42 requires exactly this: the universal supplied-context restriction
+# is removed as a global rule and replaced by truth-class-specific behaviour.
+#
+# The strict wording survives intact under COMPANY, which is the only place it
+# was ever meant to apply. It stopped JOE inventing company policy, and it
+# still does.
+SOURCE_FRAMING = {
+    "COMPANY": (
+        "This question asks about Level 1 Transport's own records, policy, "
+        "procedures, or operations. Use only the CONTEXT supplied; if the "
+        "context does not contain the answer, say so plainly rather than "
+        "guessing. Never fill a missing company fact with general knowledge or "
+        "with common industry practice - a figure most carriers use is not "
+        "Level 1 Transport policy. Identify the document you relied on."
+    ),
+    "GENERAL": (
+        "This is a general-knowledge question, not a question about Level 1 "
+        "Transport's own records. Answer it from your established knowledge, "
+        "as fully as it deserves. The absence of company context is not a "
+        "reason to refuse, and you must not say the supplied context does not "
+        "contain the answer. Do not present what you know as Level 1 Transport "
+        "policy, as a company decision, or as a verified current fact. If the "
+        "answer depends on something that changes - a price, an hour, a "
+        "regulation, a road condition - say so and say it should be checked "
+        "against a current source."
+    ),
+    "LIVE": (
+        "This question asks about something that changes: current conditions, "
+        "prices, hours, locations, availability, or status. Answer from the "
+        "current sources supplied and identify them. Your stored knowledge is "
+        "not a current source. If no current source is available, say you "
+        "cannot verify it rather than guessing. Never invent a citation, an "
+        "exit number, an address, a price, or an opening time."
+    ),
+}
+
+# The default when no class is stated. It deliberately does NOT contain the old
+# universal lock. It prefers supplied context, which is right for summarizing
+# and explaining material that was handed over, without refusing a question
+# simply because the Library happened to hold nothing about it.
+SYSTEM_FRAMING = (
+    AUTHORITY_FRAMING
+    + " Use the CONTEXT supplied when it bears on the question, and identify "
+    "what you relied on. When the question is general knowledge and no supplied "
+    "context bears on it, answer from your own knowledge rather than refusing, "
+    "and do not present that as company policy or as a verified current fact."
+)
+
+
+def framing_for(truth_class: str = "") -> str:
+    """The system framing for one question's truth class.
+
+    Unknown or missing class falls back to the balanced default, never to the
+    strict company lock - a misclassification should cost precision, not cost
+    Mike the answer.
+    """
+    source = SOURCE_FRAMING.get(str(truth_class or "").upper())
+    if source is None:
+        return SYSTEM_FRAMING
+    return AUTHORITY_FRAMING + " " + source
+
 
 TASK_FRAMING = {
     "answer": "Answer the question.",
@@ -173,16 +242,16 @@ class ReasoningProvider:
     def status(self) -> dict:  # pragma: no cover - interface
         raise NotImplementedError
 
-    def answer(self, question: str, context: str = "", sources=None) -> Answer:  # pragma: no cover
+    def answer(self, question: str, context: str = "", sources=None, **options) -> Answer:  # pragma: no cover
         raise NotImplementedError
 
-    def summarize(self, material: str, sources=None) -> Answer:  # pragma: no cover
+    def summarize(self, material: str, sources=None, **options) -> Answer:  # pragma: no cover
         raise NotImplementedError
 
-    def draft(self, instruction: str, context: str = "", sources=None) -> Answer:  # pragma: no cover
+    def draft(self, instruction: str, context: str = "", sources=None, **options) -> Answer:  # pragma: no cover
         raise NotImplementedError
 
-    def recommend(self, question: str, context: str = "", sources=None) -> Answer:  # pragma: no cover
+    def recommend(self, question: str, context: str = "", sources=None, **options) -> Answer:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -389,7 +458,8 @@ class ReasoningProviderAdapter(ReasoningProvider):
                 "model": self.model or "llama3.1",
                 "stream": False,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_FRAMING},
+                    {"role": "system",
+                     "content": framing_for(options.get("truth_class"))},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -399,7 +469,8 @@ class ReasoningProviderAdapter(ReasoningProvider):
                 "model": self.model or "local-model",
                 "temperature": 0.2,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_FRAMING},
+                    {"role": "system",
+                     "content": framing_for(options.get("truth_class"))},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -472,7 +543,7 @@ class ReasoningProviderAdapter(ReasoningProvider):
         parts += ["REQUEST:", instruction]
         return "\n".join(parts)
 
-    def _run(self, task, instruction, context, sources) -> Answer:
+    def _run(self, task, instruction, context, sources, **options) -> Answer:
         answer = self._post(self._prompt(task, instruction, context), task)
         answer.grounded = bool(context)
         answer.sources = list(sources or [])
@@ -480,42 +551,49 @@ class ReasoningProviderAdapter(ReasoningProvider):
 
     # ---- the contract -------------------------------------------------
 
-    def answer(self, question: str, context: str = "", sources=None) -> Answer:
+    # Every method forwards **options to the backend as well as to _run. A
+    # backend that does not understand an option ignores it; a backend that
+    # never receives one cannot honour it. Dropping options at the delegation
+    # boundary would have left truth_class stranded here, and the provider
+    # would have gone on answering every question the same way while the
+    # classifier upstream believed it was being obeyed.
+    def answer(self, question: str, context: str = "", sources=None, **options) -> Answer:
         if self.backend is not None:
-            return self.backend.answer(question, context, sources)
-        return self._run("answer", question, context, sources)
+            return self.backend.answer(question, context, sources, **options)
+        return self._run("answer", question, context, sources, **options)
 
-    def summarize(self, material: str, sources=None) -> Answer:
+    def summarize(self, material: str, sources=None, **options) -> Answer:
         if self.backend is not None:
-            return self.backend.summarize(material, sources)
-        return self._run("summarize", "Summarize this.", material, sources)
+            return self.backend.summarize(material, sources, **options)
+        return self._run("summarize", "Summarize this.", material, sources, **options)
 
-    def explain(self, material: str, question: str = "", sources=None) -> Answer:
+    def explain(self, material: str, question: str = "", sources=None, **options) -> Answer:
         if self.backend is not None:
-            return self.backend.explain(material, question, sources)
+            return self.backend.explain(material, question, sources, **options)
         return self._run(
-            "explain", question or "Explain this in plain language.", material, sources
+            "explain", question or "Explain this in plain language.", material,
+            sources, **options,
         )
 
-    def draft(self, instruction: str, context: str = "", sources=None) -> Answer:
+    def draft(self, instruction: str, context: str = "", sources=None, **options) -> Answer:
         if self.backend is not None:
-            return self.backend.draft(instruction, context, sources)
-        return self._run("draft", instruction, context, sources)
+            return self.backend.draft(instruction, context, sources, **options)
+        return self._run("draft", instruction, context, sources, **options)
 
-    def recommend(self, question: str, context: str = "", sources=None) -> Answer:
+    def recommend(self, question: str, context: str = "", sources=None, **options) -> Answer:
         if self.backend is not None:
-            return self.backend.recommend(question, context, sources)
-        return self._run("recommend", question, context, sources)
+            return self.backend.recommend(question, context, sources, **options)
+        return self._run("recommend", question, context, sources, **options)
 
-    def procedure(self, question: str, context: str = "", sources=None) -> Answer:
+    def procedure(self, question: str, context: str = "", sources=None, **options) -> Answer:
         if self.backend is not None:
-            return self.backend.procedure(question, context, sources)
-        return self._run("procedure", question, context, sources)
+            return self.backend.procedure(question, context, sources, **options)
+        return self._run("procedure", question, context, sources, **options)
 
-    def research(self, question: str, context: str = "", sources=None) -> Answer:
+    def research(self, question: str, context: str = "", sources=None, **options) -> Answer:
         """Web-grounded research, where the provider supports it."""
         if self.backend is not None and hasattr(self.backend, "research"):
-            return self.backend.research(question, context, sources)
+            return self.backend.research(question, context, sources, **options)
         return Answer(
             text="", ok=False, task="research", provider=self.provider,
             error="the configured reasoning provider cannot perform sourced web research",

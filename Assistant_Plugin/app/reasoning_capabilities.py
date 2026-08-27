@@ -28,6 +28,15 @@ from contracts import (
     ReasoningMode,
 )
 
+from .truth_class import (
+    COMPANY,
+    GENERAL,
+    LIVE,
+    classify,
+    label_for,
+    library_answers_this,
+)
+
 NO_REASONING_PROVIDER = (
     "No reasoning provider is connected to JOE, so I cannot compose "
     "an original answer. What I can do is search approved Library material, "
@@ -271,7 +280,8 @@ class ReasoningCapabilities:
         lowered = (text or "").lower()
         return any(phrase in lowered for phrase in cls._CONTEXT_MISS)
 
-    def _retry_ungrounded(self, capability, request, answer, header):
+    def _retry_ungrounded(self, capability, request, answer, header,
+                          truth_class=GENERAL):
         """Ask again with no context when the material handed over missed.
 
         A weak keyword match should not starve a question that general industry
@@ -288,8 +298,20 @@ class ReasoningCapabilities:
         retry is labelled GENERAL_REASONING and never as company material."""
         if not self._context_missed(getattr(answer, "text", "")):
             return None
+
+        # Never for a company question. This retry deliberately drops the
+        # context, and a company question answered with no company context is
+        # exactly the invention the supplied-context rule exists to prevent:
+        # "most carriers use about two dollars a mile" is not Level 1
+        # Transport policy, however reasonable it sounds. Doctrine section
+        # 11.5. Missing company truth stays missing.
+        if truth_class == COMPANY:
+            return None
+
         try:
-            retry = self.reasoning.answer(request.text, "", [])
+            retry = self.reasoning.answer(
+                request.text, "", [], truth_class=truth_class
+            )
         except Exception:  # noqa: BLE001 - a failed retry is not a failed answer
             return None
         if not getattr(retry, "ok", False):
@@ -379,7 +401,32 @@ class ReasoningCapabilities:
         Like _handle_explain, this asserted there was no provider in its own
         answer text. That text shipped unchanged into a signed-in session."""
         subject = chosen.subject or request.text
+        truth = classify(subject)
         context, sources, hits = self._library_context(subject)
+
+        # A question whose answer changes needs a current source, not a memory.
+        # Research already reaches the web and returns citations; it was simply
+        # unreachable unless Mike said the word "research", which is not a word
+        # anyone says at seventy miles an hour. Doctrine section 18.
+        #
+        # Its failure response is returned as-is rather than falling through:
+        # "I could not verify that" is the correct answer to a live question
+        # with no live source, and guessing is exactly what section 19 forbids.
+        if truth == LIVE:
+            return self._handle_research(request, chosen)
+
+        # A Library search is word overlap, so it nearly always returns
+        # something. "driving distance between Jacksonville and Atlanta"
+        # matched two Level 1 Vision documents on the word "driving" and missed
+        # "distance", "atlanta" and "georgia" entirely - then handed those
+        # documents over as CONTEXT, and the model answered, correctly, that
+        # the context did not contain the distance.
+        #
+        # For a general question the Library does not actually cover, the
+        # honest move is to carry no context at all rather than context that
+        # can only mislead. Doctrine section 25: minimum necessary source.
+        if truth == GENERAL and not library_answers_this(hits):
+            context, sources, hits = "", [], []
 
         if not self._reasoning_live():
             if hits:
@@ -392,11 +439,17 @@ class ReasoningCapabilities:
                 return fallback
             return self._no_reasoning(Capability.ANSWER, "answer that")
 
-        answer = self.reasoning.answer(request.text, context, sources)
-        retried = self._retry_ungrounded(Capability.ANSWER, request, answer, "")
+        answer = self.reasoning.answer(
+            request.text, context, sources, truth_class=truth
+        )
+        retried = self._retry_ungrounded(
+            Capability.ANSWER, request, answer, "", truth_class=truth
+        )
         if retried is not None:
             return retried
-        response = self._reasoned(Capability.ANSWER, answer, sources, hits)
+        response = self._reasoned(
+            Capability.ANSWER, answer, sources, hits, label_for(truth)
+        )
         response.reasoning_mode = self._mode_from_response(response)
         return response
 
