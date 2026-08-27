@@ -18,9 +18,15 @@ Assistant_Plugin/proof/_workspace/
 Assistant_Plugin/tests/_workspace/
 ASST/*/Tests/_workspace/
 
-# A packaged duplicate of the plugin source. Keeping both copies in history
-# is how they drift apart; build it from source when a release is needed.
-Assistant_Plugin/Deployment/
+# The BUILT package only - a duplicate of the plugin source, and keeping both
+# copies in history is how they drift apart. Build it from source when a
+# release is needed.
+#
+# The packaging scripts beside it are NOT ignored. They are source, and the
+# earlier rule ignored the whole Deployment folder, so PACKAGE_ASSISTANT.cmd
+# was untracked: it still excluded "assistant.config.json" long after the
+# program was renamed to JOE, and nobody could see it in a diff.
+Assistant_Plugin/Deployment/Assistant_Plugin_v1.0.0/
 
 # ---- Separately versioned ------------------------------------------------
 

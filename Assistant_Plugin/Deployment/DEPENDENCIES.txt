@@ -1,0 +1,55 @@
+LEVEL 1 ASSISTANT PLUGIN - DEPENDENCIES
+=======================================
+
+REQUIRED
+  Python 3.10 or newer          https://python.org
+                                Install with the "py" launcher included.
+  tkinter                       Ships with Python on Windows. Verified 8.6.
+  Windows 10 or 11              Verified on Windows 11 Pro 26200.
+
+THIRD-PARTY PYTHON PACKAGES
+  Required ONLY for the Microsoft 365 Copilot reasoning provider:
+
+    msal              Microsoft's supported authentication library
+    msal-extensions   encrypted token cache (Windows DPAPI)
+
+  Install:
+    py -m pip install --user msal msal-extensions
+
+  Verified here: msal 1.38.0, msal-extensions 1.3.1
+
+  WITHOUT THEM the Assistant still runs. Reasoning reports
+  REASONING NOT CONFIGURED and every local capability - Library,
+  Outlook, voice, memory, retention - keeps working.
+
+  Nothing else is required. Every other part of this program uses the
+  Python standard library only.
+
+OPTIONAL, FOR LIVE CAPABILITIES
+  Microsoft Outlook (desktop)   Live read-only calendar / mail / contacts.
+                                Verified: Outlook 16.0.0.20326, 3 accounts.
+                                Without it the Assistant says Outlook is not
+                                connected.
+
+  Windows System.Speech         Spoken output. Ships with Windows.
+                                Verified: Microsoft David, Microsoft Zira.
+
+  A microphone                  Voice input. Verified present:
+                                Internal Microphone (Conexant ISST Audio).
+
+  Microsoft 365 Copilot         Reasoning and web-grounded research.
+                                Requires ALL of:
+                                  - a work or school account (NOT a personal
+                                    Microsoft account - unsupported by the API)
+                                  - a Microsoft 365 Copilot licence
+                                  - an Entra app registration (public client,
+                                    device code flow)
+                                  - admin consent on seven delegated Graph
+                                    scopes
+                                PILOT / PREVIEW: Microsoft states /beta APIs
+                                are not supported for production use.
+
+NOT REQUIRED, AND NOT PRESENT
+  Dispatch                      Never contacted. Not needed to run.
+  Any client secret             A public desktop client never uses one.
+  Any API key in a file         No credential is stored in any file.

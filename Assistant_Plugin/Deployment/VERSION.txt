@@ -1,0 +1,48 @@
+LEVEL 1 ASSISTANT - DISPATCH PLUGIN
+===================================
+
+Program            Level 1 Assistant - Dispatch Plugin
+Version            1.0.0
+Built              2026-08-25
+Build machine      Windows 11 Pro 26200
+Runtime            Python 3.14.5, tkinter 8.6
+Third-party deps   none (standard library only)
+
+GOVERNING DOCTRINE
+  ASSISTANT_PLUGIN_CONSTITUTION_v1  (v1.0, Documents 1-5)
+  D:\SANDBOX\Assistan_Building\ASSISTANT_PLUGIN_CONSTITUTION_v1\
+
+PACKAGED COMPONENTS  (copied unchanged from ASST\1..6)
+  Assistant UI        ASST\1     39 of its own tests
+  Assistant Memory    ASST\2     45
+  Assistant Library   ASST\3     53
+  Assistant Outlook   ASST\4     63
+  Assistant Research  ASST\5     78
+  Assistant Voice     ASST\6     72
+  Retention language  reused verbatim from Sandbox Engine v1
+
+VERIFICATION
+  Assembly tests    259 (258 passed, 1 live-Outlook skip)
+  Component tests   350 passed, 0 failed
+  Combined          609
+  Local proof        24 of 24 steps
+
+LIVE ON THE BUILD MACHINE
+  Library            LIVE   Company Library, 28 docs + 6 sample
+  Outlook            LIVE   read-only, Outlook 16.0.0.20326
+  Voice output       LIVE   System.Speech, 2 voices, spoke aloud
+
+NOT LIVE
+  Voice input        engine binds; recognition needs a person at the mic
+  Research           SAMPLE DATA - no provider configured
+  Dispatch           NOT CONNECTED - no published interface exists
+  Printing           NOT IMPLEMENTED - request only
+  Reasoning provider NOT CONNECTED - the Assistant cannot compose answers
+
+DISPATCH
+  Contacted          never
+  Operational writes 0
+  Code merged        none
+  Removability       delete the folder; Dispatch is unaffected
+
+Mike Zachary remains final authority.
