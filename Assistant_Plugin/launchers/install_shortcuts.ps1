@@ -48,18 +48,58 @@ $shell = New-Object -ComObject WScript.Shell
 $made = 0
 $skipped = @()
 
-# A shortcut to a .cmd flashes a black console every time it is used, because
-# Windows gives cmd.exe a console before the batch file can do anything - and
-# START_JOE.cmd's whole job is to find pyw and hand off to it. Pointing the
-# JOE shortcut straight at pyw.exe removes the middleman and the flash.
+# The JOE shortcut points straight at a Python interpreter. Two things had to
+# be removed to stop a black console flashing on every launch, and the second
+# only became visible once the first was gone.
 #
-# The check START_JOE.cmd performs, that a Python launcher exists, is not lost.
-# It moves here, to install time, which is a better moment to discover a
-# missing Python than the moment Mike wants to use the program. If pyw is not
+# A shortcut to a .cmd always flashes: Windows gives cmd.exe a console before
+# the batch file can run a line, and START_JOE.cmd's whole job is to locate an
+# interpreter and hand off to it. So the middleman goes.
+#
+# And the interpreter must be a REAL executable, not a Store app-execution
+# alias. The pyw.exe in WindowsApps\ is a zero-byte reparse point that Windows
+# resolves through the app model, and that resolution flashes too - it was the
+# one Mike could still see after the adapters were fixed. A real pythonw.exe is
+# a GUI-subsystem binary and owns no console at any point, which is what the
+# subsystem check below confirms rather than assumes.
+#
+# The check START_JOE.cmd performs, that an interpreter exists at all, is not
+# lost. It moves here, to install time, which is a better moment to discover a
+# missing Python than the moment Mike wants to use the program. With none
 # found the shortcut falls back to the batch file, which explains the problem
 # properly.
-$pyw = (Get-Command pyw.exe -ErrorAction SilentlyContinue |
-        Select-Object -First 1).Source
+function Find-RealPythonw {
+    $candidates = @()
+    $candidates += (Get-Command pythonw.exe -All -ErrorAction SilentlyContinue |
+                    ForEach-Object { $_.Source })
+    $candidates += (Join-Path $env:LOCALAPPDATA "Python\bin\pythonw.exe")
+    $candidates += (Get-ChildItem (Join-Path $env:LOCALAPPDATA "Python") `
+                    -Recurse -Filter pythonw.exe -ErrorAction SilentlyContinue |
+                    ForEach-Object { $_.FullName })
+    $candidates += (Get-Command pyw.exe -All -ErrorAction SilentlyContinue |
+                    ForEach-Object { $_.Source })
+
+    foreach ($path in $candidates) {
+        if (-not $path -or -not (Test-Path $path)) { continue }
+        $file = Get-Item $path -Force -ErrorAction SilentlyContinue
+        # A zero-length entry is an app-execution alias, not a program.
+        if (-not $file -or $file.Length -eq 0) { continue }
+        try {
+            $stream = [IO.File]::OpenRead($path)
+            $reader = New-Object IO.BinaryReader($stream)
+            $stream.Seek(0x3C, 'Begin') | Out-Null
+            $header = $reader.ReadInt32()
+            $stream.Seek($header + 0x5C, 'Begin') | Out-Null
+            $subsystem = $reader.ReadInt16()
+            $reader.Close(); $stream.Close()
+        } catch { continue }
+        # 2 is the Windows GUI subsystem: no console, ever.
+        if ($subsystem -eq 2) { return $path }
+    }
+    return $null
+}
+
+$pyw = Find-RealPythonw
 
 foreach ($item in $shortcuts) {
     $target = Join-Path $PluginRoot $item.Target
@@ -98,10 +138,11 @@ foreach ($item in $shortcuts) {
 foreach ($s in $skipped) { "  SKIPPED   $s" }
 "  {0} shortcut(s) on {1}" -f $made, $desktop
 if ($pyw) {
-    "  JOE opens with no console window (pyw at {0})" -f $pyw
+    "  JOE opens with no console window" 
+    "  interpreter: {0}" -f $pyw
 } else {
-    "  NOTE: no pyw.exe found on this machine, so the JOE shortcut goes"
-    "        through START_JOE.cmd and will flash a console window."
+    "  NOTE: no real pythonw.exe found - only Store aliases, which flash."
+    "        The JOE shortcut goes through START_JOE.cmd instead."
     "        Install Python 3.10 or newer from python.org and run this again."
 }
 
