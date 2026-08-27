@@ -23,10 +23,10 @@ ASST/*/Tests/_workspace/
 # release is needed.
 #
 # The packaging scripts beside it are NOT ignored. They are source, and the
-# earlier rule ignored the whole Deployment folder, so PACKAGE_ASSISTANT.cmd
+# earlier rule ignored the whole Deployment folder, so the packaging script
 # was untracked: it still excluded "assistant.config.json" long after the
 # program was renamed to JOE, and nobody could see it in a diff.
-Assistant_Plugin/Deployment/Assistant_Plugin_v1.0.0/
+Assistant_Plugin/Deployment/JOE_Assistant_v1.1.0/
 
 # ---- Separately versioned ------------------------------------------------
 

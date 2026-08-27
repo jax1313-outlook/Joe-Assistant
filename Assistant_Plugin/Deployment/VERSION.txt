@@ -1,48 +1,58 @@
-LEVEL 1 ASSISTANT - DISPATCH PLUGIN
-===================================
+JOE, THE LEVEL 1 ASSISTANT
+==========================
 
-Program            Level 1 Assistant - Dispatch Plugin
-Version            1.0.0
-Built              2026-08-25
-Build machine      Windows 11 Pro 26200
+Program            JOE, the Level 1 Assistant - a Dispatch plugin
+Package            JOE_Assistant_v1.1.0
+Version            1.1.0
+Built              2026-08-27
+Build machine      Windows 11 Pro 26200, HP ProBook 650 G4
 Runtime            Python 3.14.5, tkinter 8.6
-Third-party deps   none (standard library only)
 
 GOVERNING DOCTRINE
   ASSISTANT_PLUGIN_CONSTITUTION_v1  (v1.0, Documents 1-5)
-  D:\SANDBOX\Assistan_Building\ASSISTANT_PLUGIN_CONSTITUTION_v1\
+  D:\Joe Assistant\ASSISTANT_PLUGIN_CONSTITUTION_v1\
 
-PACKAGED COMPONENTS  (copied unchanged from ASST\1..6)
-  Assistant UI        ASST\1     39 of its own tests
-  Assistant Memory    ASST\2     45
-  Assistant Library   ASST\3     53
-  Assistant Outlook   ASST\4     63
-  Assistant Research  ASST\5     78
-  Assistant Voice     ASST\6     72
-  Retention language  reused verbatim from Sandbox Engine v1
+  Amendment 1, transmission on explicit spoken authority, is DRAFTED AND NOT
+  IN FORCE. JOE cannot send anything in this build, and Article II has eight
+  permitted functions, not nine.
 
-VERIFICATION
-  Assembly tests    259 (258 passed, 1 live-Outlook skip)
-  Component tests   350 passed, 0 failed
-  Combined          609
-  Local proof        24 of 24 steps
+THIRD-PARTY PYTHON PACKAGES
+  None are required. JOE runs on the standard library, and every capability
+  that needs one says so rather than failing.
 
-LIVE ON THE BUILD MACHINE
-  Library            LIVE   Company Library, 28 docs + 6 sample
-  Outlook            LIVE   read-only, Outlook 16.0.0.20326
-  Voice output       LIVE   System.Speech, 2 voices, spoke aloud
+    msal, msal-extensions   only for the Microsoft 365 Copilot provider
+    anthropic               only for the Claude provider
 
-NOT LIVE
-  Voice input        engine binds; recognition needs a person at the mic
-  Research           SAMPLE DATA - no provider configured
-  Dispatch           NOT CONNECTED - no published interface exists
-  Printing           NOT IMPLEMENTED - request only
-  Reasoning provider NOT CONNECTED - the Assistant cannot compose answers
+  See DEPENDENCIES.txt.
 
-DISPATCH
-  Contacted          never
-  Operational writes 0
-  Code merged        none
-  Removability       delete the folder; Dispatch is unaffected
+WHAT CHANGED SINCE 1.0.0
 
-Mike Zachary remains final authority.
+  The package identity. 1.0.0 was built before the program was renamed to JOE
+  and shipped assistant_main.py and START_ASSISTANT.cmd. It kept that name
+  while the source moved on without it, so anyone deploying from it got a
+  build in which mail, calendar and contacts all refused - and its bundled
+  proof suite reported 24 of 24 while doing so.
+
+  Mailbox discovery. The registry was never discovered, so every mail,
+  calendar and contacts question refused regardless of what the mailboxes
+  held. Fixed.
+
+  One-sentence answers. JOE speaks one sentence and holds the rest until asked
+  for it. File paths are never read aloud.
+
+  Claude as a reasoning provider, with fast mode. Copilot answered in 6.6 and
+  9.9 seconds on this machine, which is too slow to talk to while driving.
+
+  The proof suite. Seven steps could report PASS while the thing they
+  described was broken; all seven now fail when it is. See
+  docs/PROOF_AUDIT_v1.md.
+
+VERIFIED
+
+  The package is checked against its source on every build, file by file, and
+  a build that fails verification is rejected rather than left in the folder
+  looking finished. See verify_package.ps1.
+
+  This candidate: 24 proofs passed, 0 skipped, 0 failed. 329 automated tests
+  pass. Verified by deploying it - copied to a fresh location on another
+  drive, given a configuration the way an operator would, and run.

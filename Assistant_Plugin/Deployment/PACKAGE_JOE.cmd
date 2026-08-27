@@ -2,7 +2,7 @@
 REM ============================================================
 REM  Build a clean deployment candidate of JOE, the Level 1 Assistant.
 REM
-REM  Produces:  Deployment\Assistant_Plugin_v1.0.0\
+REM  Produces:  Deployment\JOE_Assistant_v1.1.0\
 REM  Excludes:  runtime_data, logs, __pycache__, test/proof workspaces,
 REM             and the machine-specific configuration file.
 REM
@@ -19,7 +19,7 @@ REM  than quietly on the machine it is deployed to.
 REM ============================================================
 setlocal
 cd /d "%~dp0.."
-set "OUT=%~dp0Assistant_Plugin_v1.0.0"
+set "OUT=%~dp0JOE_Assistant_v1.1.0"
 
 echo.
 echo   Building deployment candidate...
@@ -53,7 +53,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo   To deploy: copy Assistant_Plugin_v1.0.0 anywhere, copy
+echo   To deploy: copy JOE_Assistant_v1.1.0 anywhere, copy
 echo   configuration\joe.config.template.json to
 echo   configuration\joe.config.json, edit your Library path,
 echo   then double-click START_JOE.cmd
