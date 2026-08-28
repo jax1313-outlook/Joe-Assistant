@@ -3496,10 +3496,46 @@ class TestStageARicherReads(unittest.TestCase):
     # ---- complete reads ------------------------------------------------
 
     def test_every_required_field_is_requested(self):
+        """Free text is requested as *_b64 and arrives decoded.
+
+        Asserting the raw script text broke the moment the transport changed,
+        which is the wrong thing to be sensitive to. What matters is the row a
+        caller receives, so that is what is checked - through decode_row, the
+        same function the adapter uses."""
+        from adapters.outlook_com import decode_row
         script = self._adapter()._build_script("inbox")
-        for field in self.REQUIRED_FIELDS:
-            with self.subTest(field=field):
+        for field in ("entry_id", "conversation_id", "received", "unread",
+                      "importance", "body_length", "body_truncated",
+                      "has_attachments", "attachments", "field_errors"):
+            with self.subTest(field=field, form="plain"):
                 self.assertIn(field, script)
+        for field in ("subject", "sender", "sender_address", "to", "cc", "body"):
+            with self.subTest(field=field, form="base64"):
+                self.assertIn(field + "_b64", script)
+
+        import base64 as _b64
+
+        def enc(text):
+            return _b64.b64encode(text.encode("utf-8")).decode("ascii")
+
+        row = decode_row({
+            "subject_b64": enc('Operations Manager shared "DISPATCH_HANDOFF"'),
+            "sender_b64": enc("Ariana Watson"),
+            "sender_address_b64": enc("a.watson@example.info"),
+            "to_b64": enc("Operations Manager"),
+            "cc_b64": enc(""),
+            "body_b64": enc('short emails from "Alert" with subjects'),
+            "attachments": [{"name_b64": enc("Invoice-49WASAJV.pdf"),
+                             "display_name_b64": enc("Invoice"),
+                             "size": 32000, "type": 1, "index": 1}],
+        })
+        self.assertEqual(row["subject"],
+                         'Operations Manager shared "DISPATCH_HANDOFF"')
+        self.assertEqual(row["body"], 'short emails from "Alert" with subjects')
+        self.assertEqual(row["attachments"][0]["name"], "Invoice-49WASAJV.pdf")
+        for key in row:
+            self.assertFalse(key.endswith("_b64"),
+                             "undecoded field left on the row: " + key)
 
     def test_attachment_identity_is_requested_but_not_its_content(self):
         script = self._adapter()._build_script("inbox")
@@ -3602,8 +3638,9 @@ class TestStageARicherReads(unittest.TestCase):
         """Each field is defaulted before its try, so a failure leaves a
         usable row carrying the name of what failed."""
         script = self._adapter()._build_script("inbox")
-        for field in ("entry_id", "conversation_id", "subject", "sender",
-                      "sender_address", "to", "cc", "received", "body"):
+        for field in ("entry_id", "conversation_id", "received",
+                      "subject_b64", "sender_b64", "sender_address_b64",
+                      "to_b64", "cc_b64", "body_b64"):
             with self.subTest(field=field):
                 default = "$row." + field + " = ''"
                 self.assertIn(default, script,

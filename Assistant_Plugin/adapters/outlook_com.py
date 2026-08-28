@@ -28,6 +28,8 @@ Assistant never starts Outlook.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 import subprocess
@@ -78,6 +80,49 @@ _PS_DATE_SHAPE = re.compile(r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2} (?:AM|PM)$")
 # real NUL byte got into this file once already.
 _LOWEST_PRINTABLE = 32
 
+
+# Free text travels out of PowerShell as base64, and is decoded here.
+#
+# WHY. Windows PowerShell 5.1's ConvertTo-Json emitted SOME quotes unescaped
+# inside long message bodies - 3,654 bare quotes against 36 escaped ones in one
+# real inbox - producing JSON that cannot be parsed:
+#
+#     Expecting ',' delimiter: line 1 column 136222
+#
+# and the whole mail read failed with "Outlook returned output that could not
+# be read". A message body is arbitrary text written by strangers: quotes,
+# control bytes, anything. Handing it to a serialiser that escapes it almost
+# correctly is a defect waiting for the wrong email.
+#
+# Base64 has no quotes, no control bytes and no escaping. There is nothing left
+# to get wrong.
+_B64_FIELDS = ("subject", "sender", "sender_address", "to", "cc", "body")
+_B64_ATTACHMENT_FIELDS = ("name", "display_name")
+
+
+def _decode_b64(value: str) -> str:
+    try:
+        return base64.b64decode(str(value or "")).decode("utf-8", "replace")
+    except (ValueError, binascii.Error):
+        return ""
+
+
+def decode_row(row: dict) -> dict:
+    """Turn every *_b64 field back into the plain field it stands for."""
+    if not isinstance(row, dict):
+        return row
+    for field in _B64_FIELDS:
+        key = field + "_b64"
+        if key in row:
+            row[field] = _decode_b64(row.pop(key))
+    for attachment in row.get("attachments") or []:
+        if not isinstance(attachment, dict):
+            continue
+        for field in _B64_ATTACHMENT_FIELDS:
+            key = field + "_b64"
+            if key in attachment:
+                attachment[field] = _decode_b64(attachment.pop(key))
+    return row
 
 def json_safe(text: str) -> tuple[str, int]:
     """Remove control bytes PowerShell left unescaped. Returns (text, removed).
@@ -132,6 +177,10 @@ try {
     try { $out.account = $ns.Accounts.Item(1).SmtpAddress } catch { $out.account = '(default store)' }
   }
 
+  function B64 { param([string]$s)
+    if ($null -eq $s) { $s = '' }
+    return [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s))
+  }
   $out.folder = $folder.Name
   $out.folder_total = $folder.Items.Count
   $source = $folder.Items
@@ -287,12 +336,12 @@ _FIELDS = {
         "    try { $row.entry_id = [string]$i.EntryID } catch { $errs += 'entry_id' }\n"
         "    $row.conversation_id = ''\n"
         "    try { $row.conversation_id = [string]$i.ConversationID } catch { $errs += 'conversation_id' }\n"
-        "    $row.subject = ''\n"
-        "    try { $row.subject = [string]$i.Subject } catch { $errs += 'subject' }\n"
+        "    $row.subject_b64 = ''\n"
+        "    try { $row.subject_b64 = B64 ([string]$i.Subject) } catch { $errs += 'subject' }\n"
         # sender: display name, and the real SMTP address behind it
-        "    $row.sender = ''\n"
-        "    try { $row.sender = [string]$i.SenderName } catch { $errs += 'sender' }\n"
-        "    $row.sender_address = ''\n"
+        "    $row.sender_b64 = ''\n"
+        "    try { $row.sender_b64 = B64 ([string]$i.SenderName) } catch { $errs += 'sender' }\n"
+        "    $row.sender_address_b64 = ''\n"
         "    $row.sender_address_resolved = $false\n"
         "    try {\n"
         "      $addr = ''\n"
@@ -303,13 +352,13 @@ _FIELDS = {
         "        try { $ex = $i.Sender.GetExchangeUser(); if ($ex) { $addr = [string]$ex.PrimarySmtpAddress; $row.sender_address_resolved = $true } } catch { }\n"
         "      }\n"
         "      if ($addr -eq '') { $addr = [string]$i.SenderEmailAddress }\n"
-        "      $row.sender_address = $addr\n"
+        "      $row.sender_address_b64 = B64 $addr\n"
         "    } catch { $errs += 'sender_address' }\n"
         # recipients
-        "    $row.to = ''\n"
-        "    try { $row.to = [string]$i.To } catch { $errs += 'to' }\n"
-        "    $row.cc = ''\n"
-        "    try { $row.cc = [string]$i.CC } catch { $errs += 'cc' }\n"
+        "    $row.to_b64 = ''\n"
+        "    try { $row.to_b64 = B64 ([string]$i.To) } catch { $errs += 'to' }\n"
+        "    $row.cc_b64 = ''\n"
+        "    try { $row.cc_b64 = B64 ([string]$i.CC) } catch { $errs += 'cc' }\n"
         # state
         "    $row.received = ''\n"
         "    try { $row.received = [string]$i.ReceivedTime } catch { $errs += 'received' }\n"
@@ -318,7 +367,7 @@ _FIELDS = {
         "    $row.importance = 1\n"
         "    try { $row.importance = [int]$i.Importance } catch { $errs += 'importance' }\n"
         # body, capped and honest about the cap
-        "    $row.body = ''\n"
+        "    $row.body_b64 = ''\n"
         "    $row.body_truncated = $false\n"
         "    $row.body_length = 0\n"
         "    try {\n"
@@ -330,8 +379,8 @@ _FIELDS = {
         # "Invalid control character at column 11551", and every message in
         # that batch was lost with it. Strip the ones JSON cannot carry, keep
         # the three that mean something in a body, and say when it happened.
-        "      if ($b.Length -gt __BODYMAX__) { $row.body = $b.Substring(0, __BODYMAX__); $row.body_truncated = $true }\n"
-        "      else { $row.body = $b }\n"
+        "      if ($b.Length -gt __BODYMAX__) { $row.body_b64 = B64 ($b.Substring(0, __BODYMAX__)); $row.body_truncated = $true }\n"
+        "      else { $row.body_b64 = B64 $b }\n"
         "    } catch { $errs += 'body' }\n"
         # attachments: names, types, sizes, identities. NOT contents.
         "    $row.has_attachments = $false\n"
@@ -339,9 +388,9 @@ _FIELDS = {
         "    try {\n"
         "      $row.has_attachments = [bool]($i.Attachments.Count -gt 0)\n"
         "      foreach ($a in $i.Attachments) {\n"
-        "        $one = [ordered]@{ name = ''; display_name = ''; size = 0; type = 0; index = 0 }\n"
-        "        try { $one.name = [string]$a.FileName } catch { }\n"
-        "        try { $one.display_name = [string]$a.DisplayName } catch { }\n"
+        "        $one = [ordered]@{ name_b64 = ''; display_name_b64 = ''; size = 0; type = 0; index = 0 }\n"
+        "        try { $one.name_b64 = B64 ([string]$a.FileName) } catch { }\n"
+        "        try { $one.display_name_b64 = B64 ([string]$a.DisplayName) } catch { }\n"
         "        try { $one.size = [int]$a.Size } catch { }\n"
         "        try { $one.type = [int]$a.Type } catch { }\n"
         "        try { $one.index = [int]$a.Index } catch { }\n"
@@ -649,6 +698,10 @@ class OutlookComAdapter:
         items = payload.get("items") or []
         if isinstance(items, dict):
             items = [items]
+        # Free text came out as base64 so PowerShell's JSON escaping could not
+        # mangle it. Put it back before anyone downstream sees a row.
+        items = [decode_row(dict(row)) if isinstance(row, dict) else row
+                 for row in items]
 
         ordering = str(payload.get("ordering", "folder"))
         ordering_note = str(payload.get("ordering_note", ""))

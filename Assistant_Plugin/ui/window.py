@@ -66,8 +66,28 @@ class AssistantWindow:
 
         self.root = tk.Tk()
         self.root.title(TITLE)
-        self.root.geometry("1180x820")
-        self.root.minsize(980, 660)
+        # Fit the screen this machine actually has, rather than the screen the
+        # window was designed on.
+        #
+        # A fixed 1180x820 plus title bar and borders comes to about 859 pixels
+        # tall. This laptop's working area is 816. The bottom forty-odd pixels
+        # were clipped off the bottom of the display - and what lives there is
+        # the input box and the whole quick-access row: Library search,
+        # Research, Calendar, Unread mail, Speak answer, Help, Settings.
+        #
+        # Mike could still type, because the entry holds focus when the window
+        # opens, so the defect hid behind the one habit that worked. Everything
+        # he had to CLICK was simply not on the screen. A truck laptop is more
+        # likely to be smaller than this one, not larger.
+        chrome = 80          # title bar, borders, and room for the taskbar
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        width = max(900, min(1180, screen_w - 40))
+        height = max(560, min(820, screen_h - chrome))
+        self.root.geometry("%dx%d" % (width, height))
+        # minsize must never exceed what the screen can show, or the window
+        # cannot be shrunk to fit and the controls stay unreachable.
+        self.root.minsize(min(980, width), min(660, height))
         self.root.configure(bg=BG)
 
         self._build()
@@ -127,10 +147,19 @@ class AssistantWindow:
         hwrap.pack(fill="both", expand=True, pady=(4, 8))
         hscroll = tk.Scrollbar(hwrap, orient="vertical")
         hscroll.pack(side="right", fill="y")
+        # A small REQUESTED height, not a small panel. pack() cannot shrink a
+        # widget below what it asks for, and the defaults - Listbox 10 rows,
+        # Text 24 - added up to more than a 1536x816 laptop screen. The
+        # overflow fell off the bottom, and what was down there was the input
+        # box and every button: Library search, Research, Calendar, Unread
+        # mail, Speak answer, Help, Settings.
+        #
+        # expand=True still gives these panels all the spare room on a big
+        # screen. Asking for less simply lets them yield on a small one.
         self.history = tk.Listbox(
             hwrap, bg=PANEL, fg=INK, font=MONO, selectbackground=ACCENT,
             selectforeground="#ffffff", borderwidth=0, highlightthickness=0,
-            activestyle="none", yscrollcommand=hscroll.set,
+            activestyle="none", yscrollcommand=hscroll.set, height=8,
         )
         self.history.pack(side="left", fill="both", expand=True)
         hscroll.config(command=self.history.yview)
@@ -174,7 +203,7 @@ class AssistantWindow:
         self.response = tk.Text(
             rwrap, bg=PANEL, fg=INK, font=MONO, wrap="word",
             borderwidth=0, highlightthickness=0, padx=12, pady=10,
-            yscrollcommand=rscroll.set, insertbackground=INK,
+            yscrollcommand=rscroll.set, insertbackground=INK, height=10,
         )
         self.response.pack(side="left", fill="both", expand=True)
         rscroll.config(command=self.response.yview)

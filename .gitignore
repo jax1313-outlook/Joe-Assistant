@@ -38,3 +38,8 @@ Build/Jules/
 # Personal Claude Code overrides. Per-machine by design, and this repository
 # is public - permission rules are nobody else's business.
 .claude/settings.local.json
+
+# This machine's own connection settings. Identifiers, not secrets - but they
+# name the organisation's Entra directory and this repository is public.
+# JOE writes it during sign-in setup; it must never be committed.
+Assistant_Plugin/configuration/joe.config.local.json
