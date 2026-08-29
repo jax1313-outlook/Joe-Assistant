@@ -247,6 +247,21 @@ possibly moving. **Copy the filter mechanism; do not copy its sizing.**
 
 ### 8.1 The Mission Record is not authoritative across the whole lifecycle
 
+> **CORRECTED 28 August 2026.** This section overstated the conflict. It said
+> there is "no promote path between them". There is one, and it is guarded:
+> `portal/routes/api.py:66` calls `sandbox.link_engine_load()` on booking, the
+> card stores `engine_load_id`, double-booking is refused with HTTP 409, and
+> `_sync_booked_entries()` syncs load status back to the card. `brief.html:132`
+> renders it.
+>
+> What survives the correction is narrower and still real: the link is
+> **one-directional**. The `Load` record names no card, there is **no reverse
+> lookup** in the codebase, and only `status` flows back - so the Mission
+> Record still cannot reach the intelligence and Route Risk that produced it.
+> The recommended fix is unchanged: add the reverse field.
+>
+> See `JOE_PRESENTATION_LAYER_SELECTION_REPORT.md` for the measured detail.
+
 **This is the one conflict that should be settled before any of §4 is built.**
 
 The v2 doctrine states the Mission Record *"remains the authoritative
