@@ -172,8 +172,18 @@ def main(argv=None) -> int:
     if not ready:
         print()
         print("  NOT READY. Nothing above is guessed; fix what is UNCONFIGURED")
-        print("  or UNAVAILABLE and run this again.")
+        print("  and run this again.")
         return 1
+
+    if any(state == "UNAVAILABLE" for _, state, _ in lines):
+        # Not a refusal. CONOPS v1.1 treats the link as intermittent by design
+        # and the node may come up in a minute -- each capture asks it again.
+        # But saying nothing here would let Mike speak six listings into a
+        # program that cannot record any of them.
+        print()
+        print("  DISPATCH IS NOT ANSWERING. You can start it and carry on --")
+        print("  every capture asks again. Until it answers, nothing is recorded")
+        print("  and JOE will say so each time.")
 
     print(HOW)
 
