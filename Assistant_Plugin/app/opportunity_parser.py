@@ -84,6 +84,103 @@ _TEENS = {"ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
           "eighteen": 18, "nineteen": 19}
 
 
+#: A spelled-out word, as the recognizer writes one.
+#:
+#: MEASURED, NOT GUESSED. Windows spoke each of these and the same model JOE
+#: listens with read them back:
+#:
+#:     said   "Pickettville, P I C K E T T V I L L E, Road"
+#:     heard  "Picketville, PICKETTVILA, Road."
+#:
+#:     said   "Pickettville. P. I. C. K. E. T. T. V. I. L. L. E. Road"
+#:     heard  "Picketville. PICKETTVILLE Road"
+#:
+#: **It collapses spelled letters into one run-together capitalised word.** That
+#: is the pattern, and it is the only reliable way to get a street name, a
+#: person's name or a small town into JOE -- the model has never met them and
+#: no correction table can hold them all.
+#:
+#: The second form came back exactly right and the first did not, which is worth
+#: knowing at the wheel: **spell with a beat between the letters.**
+_SPELLED = re.compile(r"\b([A-Z]{3,})\b")
+
+#: How different the spelled word may be from the word it replaces.
+#:
+#: The guard matters more than the feature. "Broker name, XPO Logistics" also
+#: contains a capitalised run, and `name` must not become `XPO`. Requiring the
+#: same first letter and a similar length keeps the correction to what it is
+#: for: a word said, then spelled.
+_SPELLED_LENGTH_SLACK = 4
+
+#: How many words back to look for the word being spelled. Two, because
+#: "Penske Logistics, P E N S K E" puts the spelling after *Logistics* --
+#: which is how a person actually says a company name -- and any further
+#: back starts reaching into a different clause.
+_SPELLED_LOOKBACK_WORDS = 3
+
+
+def apply_spelled_corrections(text: str) -> str:
+    """Let a spelled word replace the one it was spelled for.
+
+        "Pickettville, PICKETTVILLE, Road"  ->  "Pickettville Road"
+
+    **Owner ruling, 2026-09-08:** *"for street names, what we do is just allow
+    me to spell the name."* It is the answer to the limit the first live test
+    found: the recognizer got `Jeff Tissue` right because that is ordinary
+    English, and got `Penske` and `Picketville` wrong because it has never met
+    them. A correction table can hold a closed vocabulary -- four load boards,
+    eight equipment types. It cannot hold every street in Florida.
+
+    **It corrects; it never invents.** A capitalised word that is not a
+    plausible spelling of its neighbour is left exactly where it is, because an
+    acronym in a company name is not a correction and must not be treated as
+    one.
+    """
+    if not (text or "").strip():
+        return (text or "").strip()
+
+    # Word tokens and the punctuation between them, kept apart so a word can be
+    # removed without taking its neighbours' commas with it.
+    tokens = re.findall(r"[A-Za-z][A-Za-z'\-]*|[^A-Za-z]+", text.strip())
+    drop = set()
+
+    for position, token in enumerate(tokens):
+        if not (token.isupper() and token.isalpha() and len(token) >= 3):
+            continue
+        # Look back a few words, not just one. "Penske Logistics, P E N S K E"
+        # puts the spelling after *Logistics*, and the word it belongs to is one
+        # further back -- which is how a real person says a company name.
+        looked_at = 0
+        for earlier in range(position - 1, -1, -1):
+            candidate = tokens[earlier]
+            if not candidate.isalpha():
+                continue
+            looked_at += 1
+            if looked_at > _SPELLED_LOOKBACK_WORDS:
+                break
+            if (candidate[:1].lower() == token[:1].lower()
+                    and abs(len(candidate) - len(token)) <= _SPELLED_LENGTH_SLACK
+                    and not candidate.isupper()):
+                # The correction goes where the WORD was, not where the spelling
+                # was. "Penske Logistics, P E N S K E" must come back as
+                # "Penske Logistics", not as "Logistics, Penske" -- the spelling
+                # is an aside, and an aside does not take the sentence's place.
+                tokens[earlier] = token.capitalize()
+                drop.add(position)
+                # ...and one of the commas around it, or "Pickettville,
+                # PICKETTVILLE, Road" comes back as "Pickettville, Road".
+                # The one after, when there is one: the aside was parenthetical
+                # and both its commas should not survive it.
+                if position + 1 < len(tokens) and not tokens[position + 1].isalpha():
+                    drop.add(position + 1)
+                elif position - 1 > earlier and not tokens[position - 1].isalpha():
+                    drop.add(position - 1)
+                break
+
+    rebuilt = "".join(t for i, t in enumerate(tokens) if i not in drop)
+    return re.sub(r"\s{2,}", " ", rebuilt).strip()
+
+
 def correct_mishearings(text: str) -> str:
     """Repair what a general-purpose recognizer does to freight vocabulary.
 
@@ -149,6 +246,9 @@ def parse_dictation(raw_text: str, channel: str = "VOICE") -> Dict[str, Any]:
     # Only speech is corrected. Text Mike typed is text Mike meant, and running
     # a mishearing table over it would change words he chose on purpose.
     if str(channel).upper() == "VOICE":
+        # Spelling first: a spelled word is Mike overriding the recognizer
+        # deliberately, and it must not be second-guessed by a table afterwards.
+        cleaned = apply_spelled_corrections(cleaned)
         cleaned = correct_mishearings(cleaned)
 
     result: Dict[str, Any] = {
