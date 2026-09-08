@@ -226,9 +226,31 @@ def _capture_by_field(service, listener) -> None:
     from . import field_capture as fc
     from .service import _dispatch_token
 
-    capture = fc.Capture(channel="VOICE")
+    token = _dispatch_token()
+    published = service.dispatch.mission_template(token=token,
+                                                  driver=service.driver)
+    try:
+        capture = fc.Capture(published, channel="VOICE")
+    except fc.NoForm as no_form:
+        # **No fallback, and there must not be one.** A remembered form is the
+        # defect this whole change exists to remove, with a longer fuse.
+        print()
+        print("  NO FORM. Dispatch did not publish the Mission Card.")
+        print("  %s" % no_form)
+        print("  Nothing was written.")
+        return
+
+    if capture.unknown_synonyms:
+        # Loudly, not silently: a field renamed in Dispatch would otherwise just
+        # stop matching and look like a recognition problem.
+        print()
+        print("  NOTE: JOE knows words for fields Dispatch no longer has -- %s."
+              % ", ".join(capture.unknown_synonyms))
+
     print()
-    print("  READING A LISTING. JOE asks; you answer; you say when to move on.")
+    print("  READING A LISTING from Dispatch's own Mission Card (%d fields)."
+          % len(capture.form))
+    print("  JOE asks; you answer; you say when to move on.")
     print()
     print("     NEXT      this field is finished, go to the next")
     print("     SKIP      leave it empty and go on")
@@ -241,8 +263,9 @@ def _capture_by_field(service, listener) -> None:
     quiet = 0
     while True:
         print()
-        print("  %s   [%s]" % (capture.asking, capture.LABEL_FOR[capture.field]),
-              flush=True)
+        print("  %s   [%s]" % (capture.asking, capture.label()), flush=True)
+        if capture.choices:
+            print("     one of: %s" % " / ".join(capture.choices))
         heard = listener.listen(seconds=LISTEN_CEILING_SECONDS)
 
         if not heard.get("recognized"):
@@ -273,13 +296,13 @@ def _capture_by_field(service, listener) -> None:
             print("  CANCELLED. Nothing was written.")
             return
         if order == "BACK":
-            print("  BACK TO %s." % capture.LABEL_FOR[capture.retreat()].upper())
+            print("  BACK TO %s." % capture.label(capture.retreat()).upper())
             continue
         if order == "SKIP":
             capture.advance()
             continue
         if order == "SCRATCH":
-            print("  CLEARED %s." % capture.LABEL_FOR[capture.clear_current()].upper())
+            print("  CLEARED %s." % capture.label(capture.clear_current()).upper())
             print("\n".join(capture.lines()))
             continue
         if order == "NEXT":
@@ -291,7 +314,7 @@ def _capture_by_field(service, listener) -> None:
                 # Board and lane are what a load is. Refusing here is cheaper
                 # than a row Mike has to find and fix later.
                 print("  NOT LOGGED. Still needed: %s."
-                      % ", ".join(capture.LABEL_FOR[f] for f in capture.missing))
+                      % ", ".join(capture.label(f) for f in capture.missing))
                 capture.go_to(capture.missing[0])
                 continue
             break
@@ -299,18 +322,18 @@ def _capture_by_field(service, listener) -> None:
         # Not a command, so it is content. Naming a field jumps to it; anything
         # else fills the field he is on.
         try:
-            field, value = fc.split_label(spoken)
+            field, value = capture.name_of(spoken)
         except fc.NothingRecognised:
-            print("  %s: %s" % (capture.LABEL_FOR[capture.field].upper(),
+            print("  %s: %s" % (capture.label().upper(),
                                 capture.add(spoken)))
             continue
 
         capture.go_to(field)
         capture.clear_current()
-        print("  %s: %s" % (capture.LABEL_FOR[field].upper(), capture.add(value)))
+        print("  %s: %s" % (capture.label(field).upper(), capture.add(value)))
 
     result = service.dispatch.submit_opportunity(
-        capture.payload(), token=_dispatch_token(), driver=service.driver)
+        capture.payload(), token=token, driver=service.driver)
 
     print()
     if result.get("mode") == "LIVE_DISPATCH":

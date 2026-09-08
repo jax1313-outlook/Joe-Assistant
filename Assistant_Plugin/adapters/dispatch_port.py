@@ -146,6 +146,55 @@ class DispatchPort:
 
     # ---- submissions --------------------------------------------------
 
+    def mission_template(self, *, token: str = "", driver: str = "") -> dict:
+        """Ask Dispatch what the form is.
+
+        **Owner ruling, 2026-09-08.** He asked *"How can Joe not know the forms
+        that are in the company library? ... the level four agent should know all
+        the documents and should be able to follow along in a field by field
+        narration. Am I correct?"* -- and he was.
+
+        JOE held eleven fields with eleven questions written here. The Mission
+        Card holds thirty-three, **each already carrying the question to ask.**
+        The copy was already wrong: no load number, which the card has always
+        had. Those eleven are deleted, not synchronised -- two lists that must
+        agree will eventually disagree, and the second is always the one nobody
+        updates.
+
+        Returns the published form, or a dict whose `mode` says why not. **There
+        is no fallback copy and there must not be one**: a cached form is the
+        same defect with a longer fuse.
+        """
+        import json
+        import urllib.error
+        import urllib.request
+
+        if not self.endpoint:
+            return {"mode": "UNCONFIGURED", "ok": False,
+                    "note": "no Dispatch endpoint is configured"}
+        if not token:
+            return {"mode": "UNCONFIGURED", "ok": False,
+                    "note": "DISPATCH_JOE_TOKEN is not set in this environment"}
+
+        request = urllib.request.Request(
+            self.endpoint.rstrip("/") + "/api/joe/mission-template",
+            headers={"Authorization": "Bearer " + token,
+                     "X-Driver": driver or "mike"},
+            method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                answer = json.loads(response.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as refused:
+            return {"mode": "REFUSED", "ok": False, "status": refused.code,
+                    "note": "Dispatch refused to publish the form (HTTP %d)"
+                            % refused.code}
+        except Exception as unreachable:  # noqa: BLE001
+            return {"mode": "UNAVAILABLE", "ok": False,
+                    "note": "Dispatch did not answer: %s" % type(unreachable).__name__}
+
+        answer["mode"] = "LIVE_DISPATCH"
+        return answer
+
     def submit_opportunity(self, fields: dict, *, token: str = "",
                            driver: str = "") -> dict:
         """Log a board listing through the seventh contract.
