@@ -89,7 +89,7 @@
     "rate": 0,
     "driver_mode": false,
     "max_spoken_words": 60,
-    "preferred_microphone": "",
+    "preferred_microphone": "Headset",
     "_microphone_comment": "preferred_microphone names the device JOE records from. With the whisper recognizer this is enforced, not just remembered - JOE binds to that device by name. Leave it empty to follow the Windows default. Windows spells the same headset several ways, so a partial name matches; JOE reports the exact device it settled on.",
     "recognizer": "whisper",
     "whisper": {

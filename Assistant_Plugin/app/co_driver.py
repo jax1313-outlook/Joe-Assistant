@@ -14,8 +14,15 @@ place.
 
 WHY IT ASKS BEFORE IT LISTENS. Nothing executes by default, and a program that
 holds the microphone open is a program recording a cab. Mike presses Enter, JOE
-records for a fixed few seconds, and the microphone closes again. There is no
+listens until he stops talking, and the microphone closes again. There is no
 wake word listening in the background and there is not going to be one.
+
+**Three seconds of silence ends it. A clock does not.** The first version gave
+him a fixed twelve seconds and cut him off mid-sentence, taking the last three
+digits of a phone number with it. Owner ruling, 2026-09-08: *"in real
+operations, there should be no cutoff. Silence for three seconds should mean
+that's a break."* That is the 70 MPH Test -- a man reading a board should not
+also be racing a countdown he cannot see.
 
 WHAT IT REFUSES TO DO. It does not log anything Dispatch did not confirm, and it
 does not invent an id when Dispatch is unreachable -- Dispatch is the sole
@@ -36,9 +43,15 @@ import sys
 from . import bootstrap  # noqa: F401  - installs component import paths
 from .service import AssistantService
 
-# Long enough for a full listing spoken at a normal pace -- board, lane, pieces,
-# equipment, rate, pickup -- and short enough that a mis-start is cheap to redo.
-LISTEN_SECONDS = 12
+# **A ceiling, not a duration.** Three seconds of silence ends the recording --
+# Owner ruling, 2026-09-08, after twelve seconds cut him off mid-sentence and
+# took the last three digits of a phone number with it: "in real operations,
+# there should be no cutoff."
+#
+# This number exists only so a microphone left open by a fault stops on its own.
+# It should never be the thing that ends a sentence, and two minutes is far
+# longer than anything a person says to a co-driver in one breath.
+LISTEN_CEILING_SECONDS = 120
 
 WAKE = "log this one"
 
@@ -55,6 +68,8 @@ HOW = """
 
   Board and lane are what a load is. Everything else is optional -- a capture
   with gaps beats a listing lost to the next screen.
+
+  Take as long as you need. It stops three seconds after you do.
 
   ENTER  speak a listing        Q then ENTER  stop
 """
@@ -94,7 +109,16 @@ def _status(service, listener) -> tuple[bool, list]:
         lines.append(("Microphone", "UNAVAILABLE", probe["blocker"]))
         ready = False
     else:
-        lines.append(("Microphone", "LIVE", probe.get("device", "") or "Windows default"))
+        # `device_in_use`, not `device` -- the key I first read does not exist,
+        # so every run reported "Windows default" whatever it was actually bound
+        # to. Naming the wrong microphone is worse than naming none: Mike speaks
+        # into the headset while JOE listens to the laptop lid.
+        #
+        # Windows writes the Bluetooth name across two lines. One line here.
+        device = " ".join((probe.get("device_in_use") or "").split()) \
+            or "Windows default"
+        chosen = "chosen" if probe.get("device_chosen_by_joe") else "Windows default"
+        lines.append(("Microphone", "LIVE", "%s  [%s]" % (device, chosen)))
 
     lines.append(("Recognizer", "CONFIGURED",
                   "faster-whisper " + listener.model_name + ", local, no network"))
@@ -132,8 +156,9 @@ def _reachable(endpoint: str) -> str:
 
 def _capture_once(service, listener) -> None:
     print()
-    print("  SPEAK NOW -- %d seconds" % LISTEN_SECONDS, flush=True)
-    heard = listener.listen(seconds=LISTEN_SECONDS)
+    print("  SPEAK NOW -- stop when you are done, it listens for the silence",
+          flush=True)
+    heard = listener.listen(seconds=LISTEN_CEILING_SECONDS)
 
     if not heard.get("recognized"):
         # A recognizer that guesses is worse than one that fails, so this is the

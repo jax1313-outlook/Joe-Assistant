@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 
 # Whisper is trained on 16 kHz mono. It is also what a Bluetooth headset
 # natively provides when recording, so nothing is resampled twice.
@@ -50,6 +51,50 @@ DEFAULT_COMPUTE = "int8"
 # immediately and costs nothing here; a Bluetooth headset needs both.
 LINK_WARMUP_SECONDS = 2.0
 LINK_SETTLE_SECONDS = 0.25
+
+# How long a pause has to be before it counts as "he has finished".
+#
+# Owner ruling, 2026-09-08: *"Silence for three seconds should mean that's a
+# break."* Three is long enough to think mid-sentence -- reading a rate off a
+# screen, working out a pickup day -- and short enough not to feel like a hang.
+SILENCE_ENDS_IT_SECONDS = 3.0
+
+# How many blocks of the room to sample before deciding what counts as speech.
+# At 16 kHz these are fractions of a second, so it costs nothing and it is the
+# difference between working on a Bluetooth headset and working on a laptop lid.
+FLOOR_BLOCKS = 8
+
+# Speech has to be this much louder than the room. Generous: a false "he is
+# still talking" only makes the recording longer, while a false "he has stopped"
+# takes the end of his sentence -- which is the defect this exists to fix.
+FLOOR_MULTIPLE = 3.0
+
+# ...and this loud in absolute terms, for a microphone whose room reads as
+# digital silence and would otherwise make any sound at all count as speech.
+MINIMUM_SPEECH_LEVEL = 0.004
+
+# If nobody says anything at all, give up after this long.
+#
+# Without it, "silence ends the recording" has a hole in it: silence can only
+# end a recording that started, so a stray Enter with nobody speaking would hold
+# the microphone open for the whole ceiling -- two minutes of recording a cab,
+# which is the one thing this program must not do.
+NOTHING_SAID_SECONDS = 8.0
+
+
+def stop_listening(*, spoke: bool, since_sound: float, since_start: float) -> str:
+    """Should the recording stop, and why? "" means keep listening.
+
+    A pure function on purpose. The alternative is testing this by speaking into
+    a microphone, and a rule nobody can test is a rule that drifts -- **the fixed
+    twelve-second window that cut Mike off mid-sentence was never tested either,
+    because testing it needed a person.**
+    """
+    if spoke and since_sound >= SILENCE_ENDS_IT_SECONDS:
+        return "he stopped talking"
+    if not spoke and since_start >= NOTHING_SAID_SECONDS:
+        return "nobody said anything"
+    return ""
 
 
 def available() -> tuple[bool, str]:
@@ -247,6 +292,9 @@ class WhisperListener:
         used = resolved or self._windows_default_name(input_devices())
         frames: queue.Queue = queue.Queue()
         live = threading.Event()
+        spoke = threading.Event()
+        floor = []              # the room, sampled before anyone speaks
+        last_sound = [0.0]      # monotonic time of the last block with speech in it
 
         def collect(indata, _frames, _time, status):
             if status:
@@ -255,6 +303,20 @@ class WhisperListener:
             # audio, not merely that the stream object was created.
             live.set()
             frames.put(indata.copy())
+
+            level = float(numpy.sqrt(numpy.mean(numpy.square(indata))))
+            now = time.monotonic()
+            # The first blocks are the room. Every microphone has a different
+            # idea of quiet -- a Bluetooth headset's noise floor is nothing like
+            # a laptop lid's -- so the threshold is measured here rather than
+            # guessed at once for every machine.
+            if len(floor) < FLOOR_BLOCKS:
+                floor.append(level)
+                return
+            if level >= max(sum(floor) / len(floor) * FLOOR_MULTIPLE,
+                            MINIMUM_SPEECH_LEVEL):
+                spoke.set()
+                last_sound[0] = now
 
         try:
             with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS,
@@ -282,7 +344,29 @@ class WhisperListener:
                         on_ready()
                     except Exception:  # noqa: BLE001 - a prompt must not stop a recording
                         pass
-                threading.Event().wait(max(1, int(seconds)))
+
+                # **Silence ends the recording. The clock does not.**
+                #
+                # Owner ruling, 2026-09-08, after a fixed twelve-second window
+                # cut him off mid-sentence and took the last three digits of a
+                # phone number with it: *"in real operations, there should be no
+                # cutoff. Silence for three seconds should mean that's a break."*
+                #
+                # He is right, and it is the 70 MPH Test: a driver reading a
+                # board should not also be racing a countdown he cannot see.
+                #
+                # `seconds` is now a CEILING, not a duration -- a stuck-open
+                # microphone must still stop on its own, and a caller that never
+                # returns is worse than one that stops early.
+                started = time.monotonic()
+                ceiling = started + max(1, int(seconds))
+                while time.monotonic() < ceiling:
+                    threading.Event().wait(0.1)
+                    now = time.monotonic()
+                    if stop_listening(spoke=spoke.is_set(),
+                                      since_sound=now - last_sound[0],
+                                      since_start=now - started):
+                        break
         except Exception as error:  # noqa: BLE001
             return None, _brief(error), used
 
