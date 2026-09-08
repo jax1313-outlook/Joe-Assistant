@@ -24,8 +24,10 @@ from app.co_driver import _is_bare_wake
 PUBLISHED = {
     "ok": True,
     "sections": ["MISSION SOURCE", "LOAD CONTROL", "PICKUP", "DELIVERY", "CARGO"],
-    "capture_only": [{"key": "source_board", "label": "Board",
-                      "spoken": "Which board is it on?", "hint": ""}],
+    # Empty since 2026-09-08: the board was the only capture-time field and the
+    # Owner ruled it "not significant enough to track". The key stays in the
+    # fixture's shape because the form decides whether there are any, not JOE.
+    "capture_only": [],
     "fields": [
         {"key": "customer", "label": "Customer / Shipper / Broker",
          "section": "MISSION SOURCE", "required": True, "hint": "",
@@ -68,7 +70,7 @@ PUBLISHED = {
         "fields": ["source_board", "origin", "destination", "rate",
                    "pieces_weight", "equipment", "pickup_date",
                    "delivery_date", "contact", "notes", "captured_via"],
-        "required": ["source_board", "origin", "destination", "rate"],
+        "required": ["origin", "destination", "rate"],
         "dictation_order": [],
     },
 }
@@ -89,7 +91,7 @@ class TestTheFormComesFromDispatch:
                 "%s came back -- the form belongs to Dispatch" % gone)
 
     def test_the_fields_are_the_published_ones(self, capture):
-        assert capture.order[1:] == tuple(f["key"] for f in PUBLISHED["fields"])
+        assert capture.order == tuple(f["key"] for f in PUBLISHED["fields"])
 
     def test_the_question_is_the_form_s_own_words(self, capture):
         capture.go_to("customer")
@@ -100,9 +102,9 @@ class TestTheFormComesFromDispatch:
         assert capture.choices == ("LTL Freight", "Courier", "Medical")
 
     def test_what_the_contract_requires_arrives_with_the_form(self, capture):
-        """**Dispatch decides what is required, not JOE.**"""
-        assert capture.contract_required == ("source_board", "origin",
-                                             "destination", "rate")
+        """**Dispatch decides what is required, not JOE.** The board left this
+        list on 2026-09-08 and JOE needed no change to stop asking for it."""
+        assert capture.contract_required == ("origin", "destination", "rate")
 
     def test_no_form_means_no_capture_and_no_remembered_copy(self):
         """A cached form is the defect this rewrite removed, with a longer
@@ -135,7 +137,6 @@ class TestSynonymsAreVocabularyNotStructure:
 
 class TestNamingAField:
     @pytest.mark.parametrize("spoken,key,value", [
-        ("board, DAT", "source_board", "DAT"),
         ("broker, XPO Logistics", "customer", "XPO Logistics"),
         ("origin, Savannah Georgia", "pickup_location", "Savannah Georgia"),
         ("destination, Tampa", "delivery_location", "Tampa"),
@@ -171,15 +172,21 @@ class TestMikeMovesTheCursor:
         capture.add("something")
         assert capture.field == here
 
-    def test_it_starts_on_the_capture_time_question(self, capture):
-        """Which board is not a fact about the freight, so the Mission Card does
-        not carry it -- and without it the contract would refuse every capture
-        read off the card."""
-        assert capture.field == "source_board"
-        assert capture.asking == "Which board is it on?"
+    def test_it_starts_on_the_first_field_of_the_form(self, capture):
+        assert capture.field == PUBLISHED["fields"][0]["key"]
+
+    def test_a_capture_time_field_would_come_first_if_the_form_had_one(self):
+        """There are none today. The mechanism stays because **the form decides
+        whether there are any, not JOE** -- and it was needed the moment the
+        board was still required."""
+        published = dict(PUBLISHED)
+        published["capture_only"] = [{"key": "source_board", "label": "Board",
+                                      "spoken": "Which board is it on?",
+                                      "hint": ""}]
+        assert fc.Capture(published).field == "source_board"
 
     def test_it_cannot_walk_off_either_end(self, capture):
-        assert capture.retreat() == "source_board"
+        assert capture.retreat() == capture.order[0]
         for _ in range(len(capture.order) + 5):
             capture.advance()
         assert capture.field == capture.order[-1]
@@ -187,7 +194,7 @@ class TestMikeMovesTheCursor:
 
 class TestWhatGoesToDispatch:
     def _full(self, capture):
-        for spoken in ("board, DAT", "origin, Savannah", "destination, Tampa",
+        for spoken in ("origin, Savannah", "destination, Tampa",
                        "rate, twenty two hundred"):
             key, value = capture.name_of(spoken)
             capture.go_to(key)

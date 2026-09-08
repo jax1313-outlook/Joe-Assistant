@@ -78,13 +78,11 @@ SYNONYMS = {
               "special instructions", "instructions"),
     "control_name": ("load control", "who to call", "dispatcher"),
     "control_phone": ("load control phone",),
-    # Capture-time, published by Dispatch alongside the card.
-    "source_board": ("board", "load board", "posted on", "source board"),
 }
 
 #: Fields where a reference is read out phonetically -- "bravo charlie delta" --
 #: and is only useful collapsed. Keyed by the form's field key.
-PHONETIC_FIELDS = ("load_number", "control_ref", "source_board")
+PHONETIC_FIELDS = ("load_number", "control_ref")
 
 #: Move to the next field. **Mike moves the cursor. Nothing else does.**
 NEXT = ("next", "next field", "next one", "okay next", "ok next", "go on",
@@ -178,10 +176,11 @@ class Capture:
 
         self.channel = str(channel).upper()
 
-        # Capture-time facts come first: which board this was found on is not a
-        # fact about the freight, so the Mission Card does not carry it -- and
-        # without it the seventh contract would refuse every capture read off
-        # the card. Dispatch publishes these with their own questions.
+        # Dispatch may publish contract fields the Mission Card has no
+        # counterpart for. There are none today -- the board was the only one and
+        # the Owner ruled on 2026-09-08 that it is not worth tracking -- but the
+        # form decides that, not JOE, and an empty list is the right shape for
+        # "none right now".
         capture_only = [dict(spec, section="CAPTURE",
                              opportunity_field=spec["key"])
                         for spec in (published or {}).get("capture_only") or ()]
