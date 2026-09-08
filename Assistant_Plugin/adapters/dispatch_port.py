@@ -88,6 +88,10 @@ class DispatchPort:
         self.endpoint = endpoint or ""
         self.enabled = bool(enabled)
         self.submitted: list[ActionRequest] = []
+        # Short on purpose. A capture is dictated at speed and the answer is
+        # spoken back; a client that waits thirty seconds for a node that is
+        # not there has already failed the 70 MPH Test.
+        self.timeout_seconds = 8
 
     # ---- connection ---------------------------------------------------
 
@@ -141,6 +145,71 @@ class DispatchPort:
         )
 
     # ---- submissions --------------------------------------------------
+
+    def submit_opportunity(self, fields: dict, *, token: str = "",
+                           driver: str = "") -> dict:
+        """Log a board listing through the seventh contract.
+
+        **This is the one thing JOE writes, and it is not an exception to the
+        rule above.** `can_write_operational_truth` stays False and stays true:
+        an Opportunity is a *possibility*, not a commitment. Dispatch keeps
+        those in different places on purpose, the transition between them is
+        one-way and explicit, and JOE is nowhere near it. Dispatch ratified this
+        capture as Class 1 -- internal, reversible, touching no Mission Record
+        and no outside party -- which is why it needs no confirmation and why it
+        is the only submission that is not a proposal for Mike.
+
+        **Dispatch mints the identity.** If Dispatch does not answer, this
+        returns no id and says so. An earlier build kept a local store here and
+        generated its own `OPP-` ids when the node was unreachable; that is a
+        second identity authority and a second copy of truth, and both are
+        forbidden. A capture Dispatch never saw is a capture that did not
+        happen, and saying so is cheaper than reconciling two sets of ids later.
+
+        Returns a dict with `mode`, and `LIVE_DISPATCH` in it means written.
+        """
+        import json
+        import urllib.error
+        import urllib.request
+
+        if not self.endpoint:
+            return {"mode": "UNCONFIGURED", "ok": False,
+                    "note": "no Dispatch endpoint is configured; "
+                            "set dispatch.endpoint in joe.config.json"}
+        if not token:
+            return {"mode": "UNCONFIGURED", "ok": False,
+                    "note": "DISPATCH_JOE_TOKEN is not set in this environment"}
+
+        payload = {k: v for k, v in dict(fields).items() if k != "raw_dictation"}
+        payload["driver"] = driver or "mike"
+
+        request = urllib.request.Request(
+            self.endpoint.rstrip("/") + "/api/joe/opportunity",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json",
+                     "Authorization": "Bearer " + token,
+                     "X-Driver": payload["driver"]},
+            method="POST")
+
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                answer = json.loads(response.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as refused:
+            # The node answered and said no. That is a different fact from the
+            # node being gone, and Mike needs to be able to tell them apart.
+            body = ""
+            try:
+                body = json.loads(refused.read().decode("utf-8") or "{}").get("note", "")
+            except Exception:  # noqa: BLE001
+                pass
+            return {"mode": "REFUSED", "ok": False, "status": refused.code,
+                    "note": body or ("Dispatch refused the capture (HTTP %d)" % refused.code)}
+        except Exception as unreachable:  # noqa: BLE001
+            return {"mode": "UNAVAILABLE", "ok": False,
+                    "note": "Dispatch did not answer: %s" % type(unreachable).__name__}
+
+        answer["mode"] = "LIVE_DISPATCH"
+        return answer
 
     def submit(self, kind: str, detail: str) -> ActionRequest:
         """Submit a proposal toward Dispatch.

@@ -67,6 +67,20 @@ class Interaction:
         return (self.request or "")[:60]
 
 
+def _dispatch_token() -> str:
+    """The bearer token for the seventh contract, read from the environment.
+
+    **It is not in `joe.config.json` and must never be put there.** That file is
+    tracked in git. It is not held on the tablet either: CONOPS v1.1 R9 makes the
+    tablet a terminal that carries no standing secrets, so a stolen tablet is a
+    hardware loss and never a data loss. The token lives in the node's own
+    environment, which is where `setx DISPATCH_JOE_TOKEN` puts it.
+    """
+    import os
+
+    return str(os.environ.get("DISPATCH_JOE_TOKEN") or "").strip()
+
+
 def _one_line(item: dict) -> str:
     """One Outlook item, as a person would read it."""
     when = item.get("start") or item.get("received") or ""
@@ -237,6 +251,10 @@ class AssistantService(ReasoningCapabilities):
             self.research.copilot = backend
 
         dispatch_cfg = self.config.section("dispatch")
+        # Whose authority a capture carries. Dispatch requires it on every call
+        # -- "an action with nobody's name on it is an action nobody authorised"
+        # -- and there is exactly one driver on this node.
+        self.driver = str(dispatch_cfg.get("driver", "") or "mike").strip()
         self.dispatch = DispatchPort(
             interface=str(dispatch_cfg.get("interface", "none")),
             endpoint=str(dispatch_cfg.get("endpoint", "")),
@@ -383,12 +401,95 @@ class AssistantService(ReasoningCapabilities):
             Capability.SUMMARIZE: self._handle_summarize,
             Capability.DRAFT: self._handle_draft,
             Capability.PROCEDURE: self._handle_procedure,
+            Capability.OPPORTUNITY: self._handle_opportunity,
         }
         return handlers[chosen.capability](request, chosen)
 
     # ================================================================
     # Capabilities
     # ================================================================
+
+    def _handle_opportunity(self, request: AssistantRequest, chosen: Route) -> AssistantResponse:
+        """*"Joe, log this one."* -- a board listing, spoken once, at speed.
+
+        **The rate is the only thing worth asking about**, and JOE does not ask
+        it here: sparse capture is valid capture, and OPP-CAPTURE section 1 is
+        explicit that speed is the point. What was heard goes to Dispatch, and
+        Dispatch says back what it recorded.
+
+        JOE does not mint the identity and does not keep a copy. **Dispatch is
+        the sole identity authority**, so the id in the echo is Dispatch's or
+        there is no id -- see `dispatch_port.submit_opportunity`.
+        """
+        from .opportunity_parser import parse_dictation
+
+        parsed = parse_dictation(chosen.subject or request.text,
+                                 channel=request.channel)
+        result = self.dispatch.submit_opportunity(parsed, token=_dispatch_token(),
+                                                  driver=self.driver)
+
+        mode = str(result.get("mode", "")) or "UNVERIFIED"
+        live = result.get("mode") == "LIVE_DISPATCH"
+        opportunity_id = str(result.get("opportunity_id") or "")
+        echo = str(result.get("echo") or "").strip()
+        if not echo:
+            echo = ("LOGGED. OPPORTUNITY %s." % opportunity_id if opportunity_id
+                    else "NOT LOGGED. DISPATCH DID NOT ANSWER.")
+
+        # Heard-back before recorded-as. If the board or the lane came through
+        # wrong, this is the sentence Mike catches it in -- and he is driving,
+        # so it is the only place he will.
+        written = [
+            "OPPORTUNITY CAPTURE - SEVENTH CONTRACT (POST /api/joe/opportunity)",
+            "",
+            "MODE:         " + mode,
+            "VERDICT:      " + str(result.get("verdict", "") or "-"),
+            "ID:           " + (opportunity_id or "- none: Dispatch did not answer"),
+            "",
+            "HEARD:",
+            "  " + (parsed.get("raw_dictation") or chosen.subject or request.text),
+            "",
+            "PARSED:",
+        ]
+        for label, key in (("Board", "source_board"), ("Origin", "origin"),
+                           ("Destination", "destination"), ("Rate", "rate"),
+                           ("Equipment", "equipment"), ("Pieces/weight", "pieces_weight"),
+                           ("Pickup", "pickup_date"), ("Delivery", "delivery_date"),
+                           ("Captured via", "captured_via")):
+            written.append("  %-14s %s" % (label + ":", parsed.get(key) or "-"))
+        written += ["", "ECHO:", "  " + echo]
+        if not live:
+            # Worded around the governance layer on purpose. "Not written to
+            # Dispatch" contains "written to dispatch", which Constitution 3.1
+            # forbids JOE from saying -- the check is a substring and cannot
+            # read the "not". The guard is right to be blunt here; the sentence
+            # is the thing that should move, and it reads better anyway.
+            written += ["", "DISPATCH DID NOT RECORD THIS CAPTURE. "
+                        + str(result.get("note", "")).strip()]
+
+        if self.speak_replies or request.channel == "voice":
+            self.speak(echo)
+
+        return AssistantResponse(
+            capability=Capability.OPPORTUNITY,
+            answer=echo,
+            spoken_summary=echo,
+            written="\n".join(written),
+            findings=([("Opportunity %s recorded (%s)"
+                        % (opportunity_id, result.get("verdict", "")))] if live else
+                      ["Nothing was written to Dispatch."]),
+            provenance=[
+                Provenance(
+                    source="Dispatch - seventh contract",
+                    # LIVE only when Dispatch actually answered. A queued capture
+                    # is not a recorded one, and the difference is the whole of
+                    # the truth vocabulary.
+                    mode=SourceMode.LIVE if live else SourceMode.UNAVAILABLE,
+                    detail=mode,
+                    source_class=SourceClass.DISPATCH_FACT,
+                )
+            ],
+        )
 
     def _handle_help(self, request, chosen) -> AssistantResponse:
         lines = [
@@ -1247,7 +1348,12 @@ class AssistantService(ReasoningCapabilities):
             (response.spoken_summary or "").strip()
             != (response.answer or "").strip()
         )
-        if not chosen_deliberately:
+        if response.capability == Capability.OPPORTUNITY:
+            # The echo IS the spoken form. Driver-mode shaping would
+            # rewrite the one sentence Mike listens to for a misheard
+            # board or lane.
+            response.spoken_summary = response.answer
+        elif not chosen_deliberately:
             response.spoken_summary = spoken
         if driver_mode and brief.deferred:
             response.add_notice(

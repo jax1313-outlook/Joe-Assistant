@@ -99,10 +99,11 @@
     }
   },
   "dispatch": {
-    "_comment": "No approved Dispatch interface exists on this machine. The port is defined; nothing is connected. Do not point this at Dispatch internals.",
-    "interface": "none",
-    "endpoint": "",
-    "enabled": false
+    "_comment": "Dispatch publishes an approved interface now: the seven contracts under /api/joe. JOE speaks the seventh of them -- POST /api/joe/opportunity -- and nothing else. It reads nothing, writes no Mission Record, and mints no identity: Dispatch does that. NO CREDENTIAL IS STORED HERE. The bearer token is read from DISPATCH_JOE_TOKEN in the node's environment, because this file is tracked in git and because CONOPS v1.1 R9 keeps standing secrets off the tablet entirely. endpoint is the NODE's address: 127.0.0.1 when JOE runs on the node itself, and the node's LAN address when JOE runs on the tablet.",
+    "interface": "joe_contracts_v1",
+    "endpoint": "http://127.0.0.1:8080",
+    "enabled": true,
+    "driver": "mike"
   },
   "governance": {
     "stale_after_minutes": 15

@@ -21,6 +21,17 @@ from contracts import Capability
 # Ordered. First match wins.
 _ROUTES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
+        Capability.OPPORTUNITY,
+        (
+            r"\blog this (?:one|load|opportunity)\b",
+            r"\blog opportunity\b",
+            r"\bcapture opportunity\b",
+            r"\blog load\b",
+            r"\bcapture load\b",
+            r"\b(?:log|capture) (?:this|a|an) (?:load|opportunity)\b",
+        ),
+    ),
+    (
         # An explicit retrieval verb means Mike wants a document, even when the
         # subject also contains a calendar word. "Look up the appointment
         # policy" is a Library request; "my appointments tomorrow" is not.
@@ -210,13 +221,15 @@ def extract_subject(text: str) -> str:
     """The thing being asked about, with the command words trimmed off."""
     cleaned = (text or "").strip()
     cleaned = re.sub(
-        r"^(?:please\s+)?(?:can you\s+|could you\s+|would you\s+)?"
+        r"^(?:joe,?\s*)?(?:please\s+)?(?:can you\s+|could you\s+|would you\s+)?"
         r"(?:go\s+)?(?:and\s+)?"
         r"(?:how do i|how would i|what(?:'s| is) the process for|"
         r"what(?:'s| is) the procedure for|steps? (?:to|for)|"
         r"research|find|search for|search|look up|look into|dig into|"
         r"explain|summarize|summarise|draft|compose|tell me about|show me|"
-        r"get me|pull up|where is)\s+",
+        r"get me|pull up|where is|log this one:?|log this load:?|"
+        r"log this opportunity:?|log opportunity:?|capture opportunity:?|"
+        r"log load:?|capture load:?)\s*",
         "",
         cleaned,
         flags=re.IGNORECASE,

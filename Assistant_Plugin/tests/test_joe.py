@@ -489,10 +489,16 @@ class TestLabelling(PluginTestCase):
         probe = self.service.voice.probe()
         self.assertEqual(status.live_connection, bool(probe.get("tts_available")))
 
-    def test_dispatch_is_never_reported_as_connected(self):
-        status = {s.name: s for s in self.service.status()}["Dispatch"]
-        self.assertFalse(status.live_connection)
-        self.assertFalse(self.service.dispatch.connected)
+    def test_dispatch_is_never_reported_as_written_to(self):
+        """Renamed with its subject. It used to assert Dispatch was never
+        *connected*, which was a fact about a machine with no published
+        interface. Dispatch published one on 2026-09-07.
+
+        The rule underneath survives intact and is stated here instead: however
+        connected JOE is, it has performed no operational write and Dispatch
+        remains the authority."""
+        data = self.service.status_dict()
+        self.assertEqual(data["operational_writes"], 0)
 
     def test_outlook_status_reflects_configuration(self):
         status = {s.name: s for s in self.service.status()}["Outlook"]
@@ -810,14 +816,38 @@ class TestAdapters(PluginTestCase):
 
 
 class TestDispatchBoundary(PluginTestCase):
-    def test_port_is_not_connected(self):
-        self.assertFalse(self.service.dispatch.connected)
+    """**The interface exists now. The boundary did not move.**
 
-    def test_read_returns_unavailable_not_a_guess(self):
-        result = self.service.dispatch.read("loads")
-        self.assertFalse(result.ok)
-        self.assertIn("not connected", result.error)
-        self.assertEqual(result.data, {})
+    These tests were written when no approved Dispatch interface was published
+    on this machine, and several of them asserted that absence rather than the
+    rule. The absence ended on 2026-09-07: Dispatch publishes the seven
+    contracts under `/api/joe`, and JOE is pointed at the seventh of them.
+
+    What has not changed, and is what these tests are actually for: JOE reads
+    nothing, JOE writes no operational truth, JOE mints no identity, and every
+    submission except the one Class 1 capture stays a proposal for Mike.
+    """
+
+    def test_the_port_reports_the_interface_it_is_configured_with(self):
+        """`connected` is a statement about configuration, not permission. It
+        being True says an interface is published and bound -- nothing more, and
+        certainly not that JOE may write through it."""
+        self.assertTrue(self.service.dispatch.connected)
+        self.assertEqual(self.service.dispatch.interface, "joe_contracts_v1")
+
+    def test_writing_operational_truth_is_still_refused(self):
+        """The line that matters, stated by the port itself. Opportunity Capture
+        does not cross it: an Opportunity is a possibility, and Dispatch keeps
+        possibilities and commitments in different places on purpose."""
+        self.assertFalse(self.service.dispatch.probe()["can_write_operational_truth"])
+
+    def test_reads_are_still_not_implemented(self):
+        """A published interface is not a granted capability. JOE submits one
+        capture and reads nothing at all -- and says so loudly rather than
+        returning an empty result that reads like an answer."""
+        with self.assertRaises(DispatchPortError) as refused:
+            self.service.dispatch.read("loads")
+        self.assertIn("no adapter", str(refused.exception))
 
     def test_unpermitted_read_is_refused(self):
         for fact in ("bank_account", "everything", "internals"):
@@ -854,12 +884,42 @@ class TestDispatchBoundary(PluginTestCase):
                 self.assertFalse(request.accepted)
                 self.assertFalse(request.performed)
 
-    def test_no_dispatch_path_appears_in_configuration(self):
+    def test_no_credential_appears_in_configuration(self):
+        """The rule this test was always protecting. `joe.config.json` is
+        tracked in git, and CONOPS v1.1 R9 keeps standing secrets off the
+        tablet entirely -- the bearer token lives in the node's environment.
+
+        It used to assert `"interface": "none"`, which was a fact about the
+        machine rather than a rule, and it stopped being true the day Dispatch
+        published the contracts."""
         text = (
             PLUGIN_ROOT / "configuration" / "joe.config.json"
         ).read_text(encoding="utf-8").lower()
-        self.assertIn('"interface": "none"', text)
-        self.assertIn('"enabled": false', text)
+        import json
+
+        settings = json.loads(
+            (PLUGIN_ROOT / "configuration" / "joe.config.json").read_text(
+                encoding="utf-8"))
+        # Every value, everywhere in the file, whatever it is nested under. The
+        # comments may say the word "token"; no VALUE may be one.
+        def values(node):
+            if isinstance(node, dict):
+                for key, item in node.items():
+                    if not str(key).startswith("_"):
+                        yield from values(item)
+            elif isinstance(node, list):
+                for item in node:
+                    yield from values(item)
+            elif isinstance(node, str):
+                yield node
+
+        for value in values(settings):
+            with self.subTest(value=value[:40]):
+                self.assertFalse(value.lower().startswith("bearer "))
+                # A 64-character hex string is what DISPATCH_JOE_TOKEN looks
+                # like. Nothing of that shape belongs in a tracked file.
+                self.assertFalse(len(value) >= 32
+                                 and all(c in "0123456789abcdefABCDEF" for c in value))
 
 
 # ======================================================================
@@ -3130,10 +3190,14 @@ class TestCopilotInService(PluginTestCase):
         finally:
             service.shutdown()
 
-    def test_dispatch_stays_not_connected_with_copilot_selected(self):
-        self.assertFalse(self.service.dispatch.connected)
-        status = {s.name: s for s in self.service.status()}["Dispatch"]
-        self.assertFalse(status.live_connection)
+    def test_choosing_copilot_changes_nothing_about_dispatch(self):
+        """The point of this test is that the reasoning provider and the
+        Dispatch port are independent -- picking a brain does not grant a
+        capability. It used to prove that by asserting Dispatch was not
+        connected, which stopped being true when the contracts were published.
+        The independence is what it was testing and is what it tests now."""
+        self.assertFalse(self.service.dispatch.probe()["can_write_operational_truth"])
+        self.assertEqual(self.service.status_dict()["operational_writes"], 0)
 
 
 class TestTruthClasses(unittest.TestCase):
