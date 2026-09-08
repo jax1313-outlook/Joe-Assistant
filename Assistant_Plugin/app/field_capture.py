@@ -38,8 +38,8 @@ from __future__ import annotations
 
 import re
 
-from .opportunity_parser import (apply_spelled_corrections, correct_mishearings,
-                                 parse_dictation)
+from .opportunity_parser import (apply_spelled_corrections, collapse_phonetic,
+                                 correct_mishearings, parse_dictation)
 
 #: The contract's fields, in the order the Mission Card declares them.
 #:
@@ -49,9 +49,18 @@ from .opportunity_parser import (apply_spelled_corrections, correct_mishearings,
 #: `adapters` -- so this is the same order, and `test_field_capture.py` holds a
 #: note about which one is authoritative if they ever disagree.
 FIELD_ORDER = (
-    "source_board", "contact", "origin", "destination", "pieces_weight",
-    "equipment", "rate", "pickup_date", "delivery_date", "notes",
+    "source_board", "load_number", "contact", "origin", "destination",
+    "pieces_weight", "equipment", "rate", "pickup_date", "delivery_date",
+    "notes",
 )
+
+#: Fields the Opportunity contract does not carry. They are still asked for and
+#: still kept -- they travel to Dispatch inside `notes`, named, rather than being
+#: dropped on the floor because a contract has not caught up with a screen.
+#:
+#: `load_number` is on the Mission Card as "Load number (theirs)". Adding it to
+#: the seventh contract is a Class 3 change and is the Owner's to rule.
+NOT_IN_CONTRACT = ("load_number",)
 
 #: Board and lane are what a load *is*. Without them there is nothing to log and
 #: nothing to deduplicate against.
@@ -70,15 +79,41 @@ LABELS = {
                     "destination", "consignee", "deliver to", "delivering to",
                     "to"),
     "pieces_weight": ("pieces and weight", "pieces", "weight", "cargo", "freight",
-                      "pallets", "commodity"),
+                      "pallets", "commodity", "commodities", "product"),
     "equipment": ("equipment", "trailer type", "trailer", "truck type"),
     "rate": ("rate", "pay", "price", "amount", "revenue", "line haul", "linehaul"),
     "pickup_date": ("pick up date", "pickup date", "pick up day", "pickup day",
                     "pick up window", "pickup window", "picking up"),
     "delivery_date": ("delivery date", "delivery day", "delivery window",
                       "deliver by", "delivering"),
-    "notes": ("notes", "note", "comment", "comments", "remarks"),
+    "notes": ("special instructions", "special instruction", "instructions",
+              "notes", "note", "comment", "comments", "remarks"),
+    # The Mission Card has "Load number (theirs)" and the Opportunity contract
+    # does not carry it. Until that is ruled, the broker's own number goes into
+    # notes with its name on it rather than being dropped.
+    "load_number": ("load number", "load id", "reference number", "reference",
+                    "their number", "pro number", "order number"),
 }
+
+#: **Move to the next field.** Owner ruling, 2026-09-08, after the first live
+#: run: *"the movement field by field, it should allow me to give the command to
+#: move to the next field. Otherwise, it is going to constantly truncate the
+#: input."*
+#:
+#: He is right, and it is the same mistake in a new place. Silence ends an
+#: UTTERANCE -- that is what stopped the countdown cutting him off mid-sentence.
+#: It must not also end a FIELD: he is reading off a board, and a pause while he
+#: finds the next value is a man working, not a man finished. **Mike moves the
+#: cursor. Nothing else does.**
+NEXT = ("next", "next field", "next one", "okay next", "ok next", "go on",
+        "move on", "continue")
+
+#: Leave this one empty and move on. Sparse capture is valid capture.
+SKIP = ("skip", "skip it", "none", "nothing", "not given", "blank", "leave it")
+
+#: Back up one field, for when he hears the read-back and it went in the wrong
+#: place.
+BACK = ("back", "go back", "back up", "previous", "last one")
 
 #: Said on its own, these end the capture and send it.
 DONE = ("done", "that's it", "thats it", "that is it", "log it", "send it",
@@ -118,6 +153,32 @@ def is_cancel(text: str) -> bool:
 
 def is_scratch(text: str) -> bool:
     return _normalise(text) in SCRATCH
+
+
+def is_next(text: str) -> bool:
+    return _normalise(text) in NEXT
+
+
+def is_skip(text: str) -> bool:
+    return _normalise(text) in SKIP
+
+
+def is_back(text: str) -> bool:
+    return _normalise(text) in BACK
+
+
+def command(text: str) -> str:
+    """Which command was that, if any. "" when it is content, not a command.
+
+    One place, so the console cannot check them in a different order than the
+    tests do -- and so that a word can never be both a command and a value.
+    """
+    for name, check in (("NEXT", is_next), ("SKIP", is_skip), ("BACK", is_back),
+                        ("DONE", is_done), ("CANCEL", is_cancel),
+                        ("SCRATCH", is_scratch)):
+        if check(text):
+            return name
+    return ""
 
 
 def split_label(text: str) -> tuple:
@@ -170,6 +231,65 @@ class Capture:
         self.fields = {name: "" for name in FIELD_ORDER}
         self.last_filled = ""
         self.heard = []
+        #: Which field Mike is on. **He moves it. Nothing else does.** Silence
+        #: ends an utterance; only NEXT, SKIP, BACK or naming a field moves the
+        #: cursor -- because a pause while he reads the next value off a board
+        #: is a man working, not a man finished.
+        self.cursor = 0
+
+    # ---- where he is --------------------------------------------------
+
+    @property
+    def field(self) -> str:
+        """The field being filled right now."""
+        return FIELD_ORDER[min(self.cursor, len(FIELD_ORDER) - 1)]
+
+    @property
+    def asking(self) -> str:
+        return self.ASKS[self.field]
+
+    def advance(self) -> str:
+        """Move to the next field. Returns the one now being asked for."""
+        self.cursor = min(self.cursor + 1, len(FIELD_ORDER) - 1)
+        return self.field
+
+    def retreat(self) -> str:
+        self.cursor = max(self.cursor - 1, 0)
+        return self.field
+
+    def go_to(self, field: str) -> str:
+        if field in FIELD_ORDER:
+            self.cursor = FIELD_ORDER.index(field)
+        return self.field
+
+    def add(self, spoken: str) -> str:
+        """Put what was said into the field he is on, appending to what is there.
+
+        **Appending, not replacing.** He may need three breaths for an address,
+        and losing the first two because he paused to read the third is the
+        defect this whole design exists to avoid.
+        """
+        text = self._corrected(spoken)
+        self.heard.append(spoken)
+        existing = self.fields[self.field]
+        self.fields[self.field] = (existing + " " + text).strip() if existing else text
+        self.last_filled = self.field
+        return self.fields[self.field]
+
+    def clear_current(self) -> str:
+        """Empty the field he is on, without moving."""
+        self.fields[self.field] = ""
+        return self.field
+
+    def _corrected(self, spoken: str) -> str:
+        if self.channel != "VOICE":
+            return spoken.strip()
+        text = correct_mishearings(apply_spelled_corrections(spoken))
+        # A reference read phonetically -- "bravo charlie delta hotel five six"
+        # -- is only useful collapsed, and only these fields ever hold one.
+        if self.field in ("load_number", "source_board"):
+            text = collapse_phonetic(text)
+        return text.strip()
 
     # ---- filling ------------------------------------------------------
 
@@ -219,7 +339,16 @@ class Capture:
         spoken, because "twenty two hundred" has to reach Dispatch as 2200 and
         that conversion already exists and is already tested.
         """
-        sent = {name: value for name, value in self.fields.items() if value}
+        sent = {name: value for name, value in self.fields.items()
+                if value and name not in NOT_IN_CONTRACT}
+        # Named, not dropped. The contract has no place for their load number
+        # yet, and losing it because a contract has not caught up with a screen
+        # would be the program deciding what matters.
+        carried = ["%s %s" % (self.LABEL_FOR[name], self.fields[name])
+                   for name in NOT_IN_CONTRACT if self.fields[name]]
+        if carried:
+            sent["notes"] = " | ".join(carried + ([sent["notes"]]
+                                                  if sent.get("notes") else []))
         if sent.get("rate"):
             parsed = parse_dictation("x to y " + sent["rate"], channel=self.channel)
             if parsed.get("rate"):
@@ -231,29 +360,47 @@ class Capture:
     # ---- the card, as it stands ---------------------------------------
 
     LABEL_FOR = {
-        "source_board": "Board", "contact": "Customer", "origin": "Origin",
+        "source_board": "Board", "load_number": "Their load number",
+        "contact": "Customer", "origin": "Origin",
         "destination": "Destination", "pieces_weight": "Pieces / weight",
         "equipment": "Equipment", "rate": "Rate", "pickup_date": "Pickup",
         "delivery_date": "Delivery", "notes": "Notes",
     }
 
+    #: What JOE asks, in the words a person would use. Spoken and printed.
+    ASKS = {
+        "source_board": "Which board?",
+        "load_number": "Their load number?",
+        "contact": "Who is the customer?",
+        "origin": "Picking up where?",
+        "destination": "Delivering where?",
+        "pieces_weight": "What is the freight?",
+        "equipment": "What trailer?",
+        "rate": "What does it pay?",
+        "pickup_date": "Picking up when?",
+        "delivery_date": "Delivering when?",
+        "notes": "Anything else?",
+    }
+
     def lines(self) -> list:
         """The card as it stands, for a window sitting beside the load board.
 
-        Required fields that are still empty are marked, because the one thing
-        Mike needs to see at a glance is what would stop this being logged.
+        **The arrow is the most important character on it.** Mike needs to know
+        which field he is filling without being told, because being told costs a
+        sentence every time.
         """
-        out = ["  MISSION CARD - reading in progress", ""]
+        out = ["  MISSION CARD", ""]
         for name in FIELD_ORDER:
             value = self.fields[name]
-            mark = " *" if (name in REQUIRED and not value) else "  "
-            out.append("   %s %-16s %s" % (mark.strip() or " ",
-                                           self.LABEL_FOR[name] + ":",
-                                           value or "-"))
+            here = ">" if name == self.field else " "
+            need = "*" if (name in REQUIRED and not value) else " "
+            out.append("  %s %s %-19s %s" % (here, need,
+                                             self.LABEL_FOR[name] + ":",
+                                             value or "-"))
         out.append("")
         if self.missing:
-            out.append("   * still needed: %s"
+            out.append("    * still needed: %s"
                        % ", ".join(self.LABEL_FOR[f] for f in self.missing))
         else:
-            out.append("   Ready. Say DONE to log it.")
+            out.append("    Ready. Say DONE to log it.")
         return out

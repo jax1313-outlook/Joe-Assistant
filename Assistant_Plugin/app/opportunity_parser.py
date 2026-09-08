@@ -146,6 +146,72 @@ _SPELLED_LENGTH_SLACK = 4
 _SPELLED_LOOKBACK_WORDS = 3
 
 
+#: The NATO phonetic alphabet, which is how a trucker spells things out loud.
+#:
+#: OBSERVED, 2026-09-08. Asked to read a load number, Mike said it the way it is
+#: said on a phone to a broker, and the recognizer returned:
+#:
+#:     "load number b, charlie, delta, hotel, 5, 6, 2, 3, 8"
+#:
+#: Note the "b" -- the model wrote a bare letter where he said "bravo". Both
+#: forms have to work, because he will use both.
+_PHONETIC = {
+    "alpha": "A", "alfa": "A", "bravo": "B", "charlie": "C", "delta": "D",
+    "echo": "E", "foxtrot": "F", "golf": "G", "hotel": "H", "india": "I",
+    "juliet": "J", "juliett": "J", "kilo": "K", "lima": "L", "mike": "M",
+    "november": "N", "oscar": "O", "papa": "P", "quebec": "Q", "romeo": "R",
+    "sierra": "S", "tango": "T", "uniform": "U", "victor": "V", "whiskey": "W",
+    "xray": "X", "x-ray": "X", "yankee": "Y", "zulu": "Z",
+}
+
+#: How many phonetic or single-character tokens in a row before it is a spelled
+#: reference rather than a sentence. Three, because "Mike" and "Victor" are
+#: names and "Delta" and "Echo" are ordinary words -- one or two of them
+#: together is prose, and collapsing prose into initials would be a disaster.
+_PHONETIC_RUN = 3
+
+_PHONETIC_RUN_RE = re.compile(
+    r"\b(?:%s|[A-Za-z]|\d+)(?:[\s,.\-]+(?:%s|[A-Za-z]|\d+)){%d,}\b"
+    % ("|".join(sorted(_PHONETIC, key=len, reverse=True)),
+       "|".join(sorted(_PHONETIC, key=len, reverse=True)),
+       _PHONETIC_RUN - 1),
+    re.IGNORECASE)
+
+
+def collapse_phonetic(text: str) -> str:
+    """Turn a spelled-out reference into the thing it spells.
+
+        "b, charlie, delta, hotel, 5, 6, 2, 3, 8"  ->  "BCDH56238"
+
+    **Owner's own way of working, observed rather than designed for.** A load
+    number read to a broker over the phone is read phonetically, and it comes
+    back from the recognizer as a list of words. Left alone it is unusable: no
+    two readings of the same number produce the same string.
+
+    Only a run of three or more collapses. "Mike" is a name, "Delta" is an
+    airline and "Echo" is a word; two of them together is prose, and turning
+    prose into initials would be far worse than leaving a reference long.
+    """
+    if not (text or "").strip():
+        return (text or "").strip()
+
+    def letter_for(token: str) -> str:
+        low = token.lower()
+        if low in _PHONETIC:
+            return _PHONETIC[low]
+        if len(token) == 1 and token.isalpha():
+            return token.upper()
+        return token          # a run of digits stays as it is
+
+    def replace(match) -> str:
+        return "".join(letter_for(t) for t in
+                       re.findall(r"[A-Za-z]+|\d+", match.group(0)))
+
+    # A run replaced in place, so everything around it -- the commas in an
+    # address, the words in a sentence -- survives untouched.
+    return _PHONETIC_RUN_RE.sub(replace, text)
+
+
 def apply_spelled_corrections(text: str) -> str:
     """Let a spelled word replace the one it was spelled for.
 

@@ -216,3 +216,122 @@ class TestTheFieldOrderBelongsToDispatch:
         assert "dictation_order" in fc.__doc__ or "dictation_order" in (
             open(fc.__file__, encoding="utf-8").read())
         assert set(fc.REQUIRED) == {"source_board", "origin", "destination"}
+
+
+class TestMikeMovesTheCursor:
+    """**Owner ruling, 2026-09-08, after the first live run:** *"the movement
+    field by field, it should allow me to give the command to move to the next
+    field. Otherwise, it is going to constantly truncate the input."*
+
+    Silence ends an utterance. It must not end a field. He is reading off a
+    board, and a pause while he finds the next value is a man working.
+    """
+
+    def test_a_field_takes_as_many_breaths_as_it_takes(self):
+        capture = fc.Capture()
+        capture.go_to("origin")
+        capture.add("1472 Highway 516")
+        capture.add("Savannah, Georgia")
+        assert capture.fields["origin"] == "1472 Highway 516 Savannah, Georgia"
+
+    def test_only_next_moves_him_on(self):
+        capture = fc.Capture()
+        assert capture.field == "source_board"
+        capture.add("DAT")
+        assert capture.field == "source_board", "speaking moved the cursor"
+        capture.advance()
+        assert capture.field == "load_number"
+
+    def test_back_goes_back(self):
+        capture = fc.Capture()
+        capture.advance()
+        capture.advance()
+        assert capture.retreat() == "load_number"
+
+    def test_it_cannot_walk_off_either_end(self):
+        capture = fc.Capture()
+        assert capture.retreat() == "source_board"
+        for _ in range(len(fc.FIELD_ORDER) + 5):
+            capture.advance()
+        assert capture.field == fc.FIELD_ORDER[-1]
+
+    def test_naming_a_field_jumps_to_it(self):
+        """He does not have to walk there. Reading a listing out of order is
+        normal; boards do not agree on where the rate goes."""
+        capture = fc.Capture()
+        assert capture.go_to("rate") == "rate"
+
+    def test_scratch_empties_without_moving(self):
+        capture = fc.Capture()
+        capture.go_to("origin")
+        capture.add("Savannah")
+        assert capture.clear_current() == "origin"
+        assert capture.fields["origin"] == ""
+        assert capture.field == "origin"
+
+    def test_every_field_has_a_question_joe_can_ask(self):
+        """The first live run failed partly because he did not know what JOE
+        wanted -- he said "Special instructions" and "Comment" on their own,
+        waiting to be asked. Being asked is cheaper than remembering."""
+        for name in fc.FIELD_ORDER:
+            assert fc.Capture().ASKS[name].endswith("?")
+
+    def test_the_card_shows_where_he_is(self):
+        capture = fc.Capture()
+        capture.go_to("rate")
+        card = "\n".join(capture.lines())
+        assert "> " in card
+        marked = [line for line in capture.lines() if line.strip().startswith(">")]
+        assert len(marked) == 1 and "Rate" in marked[0]
+
+
+class TestOneCommandReader:
+    @pytest.mark.parametrize("spoken,expected", [
+        ("next", "NEXT"), ("Next field.", "NEXT"), ("move on", "NEXT"),
+        ("skip", "SKIP"), ("none", "SKIP"),
+        ("back", "BACK"), ("go back", "BACK"),
+        ("done", "DONE"), ("Done!", "DONE"),
+        ("cancel", "CANCEL"),
+        ("scratch that", "SCRATCH"),
+        ("DAT", ""), ("Savannah, Georgia", ""), ("two pallets", ""),
+    ])
+    def test_it_reads_the_command_or_says_it_is_content(self, spoken, expected):
+        assert fc.command(spoken) == expected
+
+    def test_no_command_word_is_also_a_field_label(self):
+        """A word that both moves the cursor and fills a field would do one of
+        them silently."""
+        for spoken in fc.NEXT + fc.SKIP + fc.BACK:
+            with pytest.raises(fc.NothingRecognised):
+                fc.split_label(spoken)
+
+
+class TestTheLoadNumberIsKeptEvenThoughTheContractHasNoPlaceForIt:
+    """The Mission Card has "Load number (theirs)". The Opportunity contract
+    does not carry it, and adding a field to a ratified contract is Class 3.
+
+    **Losing it meanwhile would be the program deciding what matters.**
+    """
+
+    def test_a_phonetic_load_number_becomes_the_number(self):
+        capture = fc.Capture(channel="VOICE")
+        capture.go_to("load_number")
+        assert capture.add("bravo charlie delta hotel 5 6 2 3 8") == "BCDH56238"
+
+    def test_it_travels_to_dispatch_inside_notes_with_its_name_on_it(self):
+        capture = fc.Capture()
+        capture.go_to("load_number")
+        capture.add("BCDH56238")
+        payload = capture.payload()
+        assert "load_number" not in payload
+        assert "BCDH56238" in payload["notes"]
+        assert "load number" in payload["notes"].lower()
+
+    def test_it_does_not_trample_a_real_note(self):
+        capture = fc.Capture()
+        capture.go_to("load_number")
+        capture.add("BCDH56238")
+        capture.go_to("notes")
+        capture.add("driver assist unload")
+        notes = capture.payload()["notes"]
+        assert "BCDH56238" in notes and "driver assist unload" in notes

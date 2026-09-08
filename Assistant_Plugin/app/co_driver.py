@@ -206,64 +206,108 @@ def _is_bare_wake(spoken: str) -> bool:
 
 
 def _capture_by_field(service, listener) -> None:
-    """Read a listing to JOE one field at a time.
+    """Read a listing to JOE, one field at a time, at Mike's pace.
 
-    The loop is: speak a field · three seconds of silence ends it · the field
-    lands · the card is printed · speak the next. **Nothing streams.** Put this
-    window beside the load board with Windows and that is the whole workflow the
-    Owner described.
+    **He moves the cursor. Nothing else does.** Owner ruling, 2026-09-08, after
+    the first live run: *"the movement field by field, it should allow me to give
+    the command to move to the next field. Otherwise, it is going to constantly
+    truncate the input."*
+
+    Silence ends an *utterance* -- that is what stopped the countdown cutting him
+    off mid-sentence. It must not also end a *field*: he is reading off a board,
+    and a pause while he finds the next value is a man working, not a man
+    finished. So a field takes as many breaths as it takes, and NEXT ends it.
+
+    **JOE names the field it is waiting for, every time.** The first live run
+    failed partly because he did not know what it wanted -- he said "Special
+    instructions" and "Comment" as labels on their own, waiting to be asked.
+    Being asked is cheaper than remembering.
     """
     from . import field_capture as fc
     from .service import _dispatch_token
 
     capture = fc.Capture(channel="VOICE")
     print()
-    print("  READING FIELD BY FIELD. Say each one with its name --")
-    print("  \"board, DAT\" ... \"rate, twenty two hundred\" ... \"pickup, Thursday\".")
-    print("  SCRATCH THAT undoes the last one. DONE logs it. CANCEL throws it away.")
-    print("\n".join(capture.lines()))
+    print("  READING A LISTING. JOE asks; you answer; you say when to move on.")
+    print()
+    print("     NEXT      this field is finished, go to the next")
+    print("     SKIP      leave it empty and go on")
+    print("     BACK      go back one field")
+    print("     SCRATCH   empty this field and start it again")
+    print("     DONE      log it            CANCEL   throw it away")
+    print()
+    print("  Take as many breaths as you need. Only NEXT moves you on.")
 
+    quiet = 0
     while True:
         print()
-        print("  NEXT FIELD -- speak when ready", flush=True)
+        print("  %s   [%s]" % (capture.asking, capture.LABEL_FOR[capture.field]),
+              flush=True)
         heard = listener.listen(seconds=LISTEN_CEILING_SECONDS)
+
         if not heard.get("recognized"):
-            print("  NOTHING HEARD. " + (heard.get("error") or "").upper())
-            print("  Say CANCEL to throw this away.")
+            quiet += 1
+            if quiet >= 3:
+                # Three silences in a row is a man who has stepped away or is
+                # reading. Stop asking into an empty room -- the microphone is
+                # open in a truck cab and that is not nothing.
+                print("  STILL HERE. Press ENTER when you are ready, or type Q.")
+                try:
+                    if input("  > ").strip().lower().startswith("q"):
+                        print("  STOPPED. Nothing was written.")
+                        return
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    return
+                quiet = 0
+            else:
+                print("  (nothing heard)")
             continue
+        quiet = 0
 
         spoken = heard["text"].strip()
         print("  HEARD: " + spoken)
 
-        if fc.is_cancel(spoken):
+        order = fc.command(spoken)
+        if order == "CANCEL":
             print("  CANCELLED. Nothing was written.")
             return
-        if fc.is_scratch(spoken):
-            cleared = capture.scratch()
-            print("  CLEARED %s." % (capture.LABEL_FOR.get(cleared, "nothing").upper()))
+        if order == "BACK":
+            print("  BACK TO %s." % capture.LABEL_FOR[capture.retreat()].upper())
+            continue
+        if order == "SKIP":
+            capture.advance()
+            continue
+        if order == "SCRATCH":
+            print("  CLEARED %s." % capture.LABEL_FOR[capture.clear_current()].upper())
             print("\n".join(capture.lines()))
             continue
-        if fc.is_done(spoken):
+        if order == "NEXT":
+            capture.advance()
+            print("\n".join(capture.lines()))
+            continue
+        if order == "DONE":
             if capture.missing:
                 # Board and lane are what a load is. Refusing here is cheaper
                 # than a row Mike has to find and fix later.
                 print("  NOT LOGGED. Still needed: %s."
                       % ", ".join(capture.LABEL_FOR[f] for f in capture.missing))
+                capture.go_to(capture.missing[0])
                 continue
             break
 
+        # Not a command, so it is content. Naming a field jumps to it; anything
+        # else fills the field he is on.
         try:
-            field, value = capture.apply(spoken)
+            field, value = fc.split_label(spoken)
         except fc.NothingRecognised:
-            # It never guesses which field a phrase belongs to. A value in the
-            # wrong field is worse than one missing, because a gap is visible
-            # and a wrong lane is not.
-            print("  NO FIELD NAMED. Start with the field: \"origin, Savannah\".")
-            print("  Nothing was changed.")
+            print("  %s: %s" % (capture.LABEL_FOR[capture.field].upper(),
+                                capture.add(spoken)))
             continue
 
-        print("  %s: %s" % (capture.LABEL_FOR[field].upper(), value))
-        print("\n".join(capture.lines()))
+        capture.go_to(field)
+        capture.clear_current()
+        print("  %s: %s" % (capture.LABEL_FOR[field].upper(), capture.add(value)))
 
     result = service.dispatch.submit_opportunity(
         capture.payload(), token=_dispatch_token(), driver=service.driver)
