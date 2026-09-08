@@ -176,11 +176,108 @@ def _capture_once(service, listener) -> None:
         print("  NOT A CAPTURE. Say \"log this one\" first. Nothing was written.")
         return
 
+    # **Two ways to say the same thing, and Mike chooses by how he pauses.**
+    #
+    # "Log this one. DAT, Jacksonville to Tampa, seven fifty" -- the whole
+    # listing in one breath, parsed as a sentence. Fast, and it is what a
+    # listing already read looks like.
+    #
+    # "Log this." then a pause -- the field-by-field read, which is how he
+    # described working from a board: open a listing and read it out, label by
+    # label, with the card filling beside it.
+    if _is_bare_wake(spoken):
+        _capture_by_field(service, listener)
+        return
+
     answer = service.ask(spoken, channel="voice").response
     print()
     print("  " + (answer.spoken_summary or answer.answer or "").strip())
     for notice in getattr(answer, "notices", []) or []:
         print("  " + str(notice))
+
+
+def _is_bare_wake(spoken: str) -> bool:
+    """Was that just the wake phrase, with no listing after it?"""
+    import re
+
+    rest = re.sub(r"^\s*(?:joe[,.\s]+)?log\s+(?:this|it)\s*(?:one|load|opportunity)?",
+                  "", spoken.strip(), flags=re.IGNORECASE)
+    return not re.sub(r"[^A-Za-z0-9]", "", rest)
+
+
+def _capture_by_field(service, listener) -> None:
+    """Read a listing to JOE one field at a time.
+
+    The loop is: speak a field · three seconds of silence ends it · the field
+    lands · the card is printed · speak the next. **Nothing streams.** Put this
+    window beside the load board with Windows and that is the whole workflow the
+    Owner described.
+    """
+    from . import field_capture as fc
+    from .service import _dispatch_token
+
+    capture = fc.Capture(channel="VOICE")
+    print()
+    print("  READING FIELD BY FIELD. Say each one with its name --")
+    print("  \"board, DAT\" ... \"rate, twenty two hundred\" ... \"pickup, Thursday\".")
+    print("  SCRATCH THAT undoes the last one. DONE logs it. CANCEL throws it away.")
+    print("\n".join(capture.lines()))
+
+    while True:
+        print()
+        print("  NEXT FIELD -- speak when ready", flush=True)
+        heard = listener.listen(seconds=LISTEN_CEILING_SECONDS)
+        if not heard.get("recognized"):
+            print("  NOTHING HEARD. " + (heard.get("error") or "").upper())
+            print("  Say CANCEL to throw this away.")
+            continue
+
+        spoken = heard["text"].strip()
+        print("  HEARD: " + spoken)
+
+        if fc.is_cancel(spoken):
+            print("  CANCELLED. Nothing was written.")
+            return
+        if fc.is_scratch(spoken):
+            cleared = capture.scratch()
+            print("  CLEARED %s." % (capture.LABEL_FOR.get(cleared, "nothing").upper()))
+            print("\n".join(capture.lines()))
+            continue
+        if fc.is_done(spoken):
+            if capture.missing:
+                # Board and lane are what a load is. Refusing here is cheaper
+                # than a row Mike has to find and fix later.
+                print("  NOT LOGGED. Still needed: %s."
+                      % ", ".join(capture.LABEL_FOR[f] for f in capture.missing))
+                continue
+            break
+
+        try:
+            field, value = capture.apply(spoken)
+        except fc.NothingRecognised:
+            # It never guesses which field a phrase belongs to. A value in the
+            # wrong field is worse than one missing, because a gap is visible
+            # and a wrong lane is not.
+            print("  NO FIELD NAMED. Start with the field: \"origin, Savannah\".")
+            print("  Nothing was changed.")
+            continue
+
+        print("  %s: %s" % (capture.LABEL_FOR[field].upper(), value))
+        print("\n".join(capture.lines()))
+
+    result = service.dispatch.submit_opportunity(
+        capture.payload(), token=_dispatch_token(), driver=service.driver)
+
+    print()
+    if result.get("mode") == "LIVE_DISPATCH":
+        echo = str(result.get("echo") or "LOGGED. OPPORTUNITY %s."
+                   % result.get("opportunity_id", ""))
+        print("  " + echo)
+        service.speak(echo)
+    else:
+        note = str(result.get("note") or "").strip()
+        print("  NOT LOGGED. DISPATCH DID NOT RECORD THIS CAPTURE. " + note)
+        service.speak("NOT LOGGED. DISPATCH DID NOT ANSWER.")
 
 
 def main(argv=None) -> int:

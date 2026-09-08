@@ -68,6 +68,33 @@ _MISHEARD_EQUIPMENT = (
     (r"\bflat[\s\-]bed\b", "flatbed"),
     (r"\bstep[\s\-]deck\b", "stepdeck"),
     (r"\bpower[\s\-]only\b", "power only"),
+    # "Two pellets." A pellet is a small ball of something; a pallet is what
+    # freight sits on. The model has no way to know which one a trucker means.
+    (r"\bpellets?\b", "pallets"),
+)
+
+#: Carrier and broker names, which are a closed vocabulary and therefore fixable.
+#:
+#: OBSERVED. "Broker name, X P O Logistics" came back as
+#: `broker name, expiologistics` -- the spoken letters were rendered as a word.
+#: Nothing in the spelled-word rule catches that, because the model produced
+#: lowercase prose rather than the capitalised run it produces when a word is
+#: spelled after being said.
+#:
+#: **This list is names, not a directory.** It holds the ones big enough that a
+#: driver says them daily; anything else is spelled, which is what spelling is
+#: for. It must not grow into an attempt to hold every broker in the country.
+_MISHEARD_CARRIER = (
+    (r"\bexp[a-z]{0,3}o?logistics\b", "XPO Logistics"),
+    (r"\bex\s?p\s?o\s+logistics\b", "XPO Logistics"),
+    (r"\bpinsky\b", "Penske"),
+    (r"\bpenskie\b", "Penske"),
+    (r"\bc\.?\s?h\.?\s+robins?on\b", "CH Robinson"),
+    (r"\bland\s?star\b", "Landstar"),
+    (r"\bschneider?\b", "Schneider"),
+    (r"\bwerner?\b", "Werner"),
+    (r"\bj\.?\s?b\.?\s+hunt\b", "JB Hunt"),
+    (r"\btotal\s+quality\s+logistics\b", "TQL"),
 )
 
 #: Spoken money. **A rate is said out loud, not read out** -- "seven fifty",
@@ -200,6 +227,9 @@ def correct_mishearings(text: str) -> str:
             break
 
     for pattern, replacement in _MISHEARD_EQUIPMENT:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+
+    for pattern, replacement in _MISHEARD_CARRIER:
         out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
 
     # "seven fifty" -> 750; "twenty two hundred" -> 2200; "eight hundred" -> 800
