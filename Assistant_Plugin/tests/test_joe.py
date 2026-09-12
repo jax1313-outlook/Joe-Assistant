@@ -2255,8 +2255,25 @@ class TestCopilotProofRunner(unittest.TestCase):
         self.assertIn("it", self.mod.FOLLOW_UP.lower())
 
     def test_the_runner_writes_a_blocked_report_that_claims_nothing(self):
-        self.mod.write_report("no tenant id", "", "", [], False, [])
-        text = (PLUGIN_ROOT / "proof" / "COPILOT_LIVE_PROOF.md").read_text(encoding="utf-8")
+        # Into a scratch file. This test used to overwrite the committed proof
+        # record, so running the suite destroyed the evidence of a real run and
+        # left the working tree dirty. A proof artifact the test suite rewrites
+        # is not a proof artifact.
+        import tempfile
+
+        committed = PLUGIN_ROOT / "proof" / "COPILOT_LIVE_PROOF.md"
+        before = committed.read_bytes() if committed.is_file() else None
+
+        with tempfile.TemporaryDirectory() as scratch:
+            target = self.mod.write_report(
+                "no tenant id", "", "", [], False, [],
+                destination=Path(scratch) / "report.md",
+            )
+            text = target.read_text(encoding="utf-8")
+
+        if before is not None:
+            self.assertEqual(committed.read_bytes(), before,
+                             "the committed proof record was overwritten by a test")
         self.assertIn("BLOCKED", text)
         self.assertIn("NOT CONNECTED", text)
         self.assertNotIn("PASS - reasoning is LIVE", text)
@@ -2384,21 +2401,40 @@ class TestVoiceProofRunner(unittest.TestCase):
             self.assertTrue(phrase.strip())
 
     def test_a_blocked_run_claims_nothing(self):
-        self.mod.write_report([], blocked="nobody was present to speak")
-        text = (PLUGIN_ROOT / "proof" / "VOICE_INPUT_PROOF.md").read_text(encoding="utf-8")
+        text = self._report([], blocked="nobody was present to speak")
         self.assertIn("BLOCKED", text)
         self.assertIn("must not be reported as working", text)
         self.assertNotIn("proven for these phrases", text)
 
+    def _report(self, attempts, blocked=""):
+        """Into a scratch file, and the committed record must not move.
+
+        These tests used to write straight over `proof/VOICE_INPUT_PROOF.md`, so
+        running the suite destroyed the evidence of a real run and left the
+        working tree dirty. A proof artifact the test suite rewrites is not a
+        proof artifact.
+        """
+        import tempfile
+
+        committed = PLUGIN_ROOT / "proof" / "VOICE_INPUT_PROOF.md"
+        before = committed.read_bytes() if committed.is_file() else None
+        with tempfile.TemporaryDirectory() as scratch:
+            target = self.mod.write_report(
+                attempts, blocked=blocked, destination=Path(scratch) / "report.md")
+            text = target.read_text(encoding="utf-8")
+        if before is not None:
+            self.assertEqual(committed.read_bytes(), before,
+                             "the committed proof record was overwritten by a test")
+        return text
+
     def test_a_partial_run_is_reported_as_not_proven(self):
-        self.mod.write_report(
+        text = self._report(
             [{"phrase": "Save this", "recognized": "save this", "overlap": 1.0,
               "ok": True, "error": ""},
              {"phrase": "Read me the detention policy", "recognized": "",
               "overlap": 0.0, "ok": False, "error": ""}],
             blocked="",
         )
-        text = (PLUGIN_ROOT / "proof" / "VOICE_INPUT_PROOF.md").read_text(encoding="utf-8")
         self.assertIn("1 of 2 phrases recognized", text)
         self.assertIn("**Voice input is NOT proven.**", text)
 
