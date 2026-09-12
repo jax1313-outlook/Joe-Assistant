@@ -1,6 +1,6 @@
 # Microsoft 365 Copilot Live Proof
 
-**Run:** 2026-08-28T00:31:24+00:00
+**Run:** 2026-09-12T18:45:55+00:00
 **Provider:** MICROSOFT 365 COPILOT - PILOT / PREVIEW
 
 Microsoft states the Copilot Chat API is a `/beta` endpoint and is not
