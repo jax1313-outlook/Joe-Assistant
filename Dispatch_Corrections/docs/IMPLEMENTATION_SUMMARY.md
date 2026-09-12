@@ -97,3 +97,22 @@ a path nothing had exercised.
 
 The coverage figure went **down** because the gate got stronger: branch coverage
 counts the false paths, and in this repository the false paths are the refusals.
+
+---
+
+## Final human review points
+
+These are the decisions this work deliberately did not make. Each one is blocked
+on Mike, not on further implementation.
+
+| # | Decision | Why it is his |
+|---|---|---|
+| **R-1** | **Is `DISPATCH_CONSTITUTION_v3` ratified?** Its header reads both *"Current Controlled Constitution"* and *"v3 Replacement Draft"*, and no repository holds an approval record. Registered `ADVISORY` — true under either reading, with no code decision resting on it. | Inferring ratification is the manufactured approval `CLAUDE.md` §4 forbids outright. |
+| **R-2** | **Place the two governance pointers** in `Claude/` and `Publisher/`. The exact files are generated in `Governance/pointers/`. | This work may only write to the sandbox. The drift detector reports both as BLOCKING, correctly, until they are placed. |
+| **R-3** | **Does THE MIKE RULE still apply to `dispatch/email_delivery.py` and `dispatch/receipt_vision.py`?** Open as R-08 in `DISPATCH_RECOVERABLE_WORK_MATRIX.md` before this work began, and untouched by it. | A standing question about duplication policy, recorded as needing him. |
+| **R-4** | **The operating timezone.** Defaults to `America/New_York`. Every appointment typed without an offset is recorded in it. | If it is wrong, every appointment is wrong by the difference. |
+| **R-5** | **Merge order.** Three merges are proposed (`MERGE_PLAN.md`); the two that are not a clean revert are named. | Sequencing a change to a system he depends on. |
+| **R-6** | **Whether to fix the remaining eleven JSON stores.** A lost update there costs a record, not a lockout. Fixing it properly means moving them into SQLite. | Larger than these findings support, and a real cost either way. |
+| **R-7** | **Microsoft account type.** Personal `outlook.com` or a Microsoft 365 tenant. The delegated flow works with either; the registration differs. | An account decision with a licensing consequence. |
+| **R-8** | **Whether SharePoint and Teams are wanted at all.** Both ports exist and report `UNCONFIGURED`; both need extra permissions. | Scope, and permissions he would be granting. |
+| **R-9** | **`Hold/library_seed/Constitutions/MANAGER_CONSTITUTION_v1.md`** — carried twice, describing a component production forbids in code. Left in place and unregistered, because `Hold` is staging and its seed is data. | It becomes doctrine the moment that corpus is promoted into Library. Flagged, not decided. |
