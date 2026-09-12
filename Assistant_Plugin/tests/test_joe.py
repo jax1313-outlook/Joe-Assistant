@@ -105,6 +105,29 @@ def make_config(root: Path) -> Config:
     return Config.load(path)
 
 
+
+def _tkinter_available() -> bool:
+    """Whether this interpreter has Tk at all.
+
+    JOE's window is Tk, which ships with CPython on Windows and is a separate
+    system package on most Linux distributions. Skipping the four tests that
+    import it is honest -- they assert something about a window, and there is no
+    window here. Letting them fail instead would mean a permanently red suite in
+    CI, and a permanently red suite is one nobody reads.
+    """
+    try:
+        import tkinter  # noqa: F401
+
+        return True
+    except Exception:  # noqa: BLE001 - a headless Tk can raise more than ImportError
+        return False
+
+
+NEEDS_TK = unittest.skipUnless(
+    _tkinter_available(), "tkinter is not installed on this interpreter"
+)
+
+
 class PluginTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.root = WORKSPACE / uuid.uuid4().hex[:8]
@@ -438,6 +461,7 @@ class TestSelection(PluginTestCase):
         with self.assertRaises(ValueError):
             self.service.ask("   ")
 
+    @NEEDS_TK
     def test_ui_module_imports_without_opening_a_window(self):
         from ui import window
 
@@ -2661,6 +2685,7 @@ class TestDriverVoiceLoop(unittest.TestCase):
         self.assertIn(self.VoiceState.SPEAKING, seen)
 
 
+@NEEDS_TK
 class TestVoiceButtonAppearance(unittest.TestCase):
     """The button's appearance IS the status indicator.
 

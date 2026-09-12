@@ -32,12 +32,44 @@ def plugin_root() -> Path:
     return Path(override).resolve() if override else PLUGIN_ROOT
 
 
+#: A Windows absolute path, and a UNC share. Recognised on every platform on
+#: purpose: `Path("C:/Windows/Temp/x").is_absolute()` is **False** on POSIX, so
+#: such a path resolves *under* the plugin root and the containment check passes
+#: it. The program runs on Windows, so a config or an argument carrying one of
+#: these is a real escape -- and on Linux it was being silently allowed, which
+#: is exactly the condition under which a containment test passes on a
+#: developer's machine and means nothing.
+import re as _re
+
+_DRIVE_ABSOLUTE = _re.compile(r"^[A-Za-z]:[\\/]")
+_UNC = _re.compile(r"^\\\\[^\\]")
+
+
+def looks_absolute_anywhere(value: str) -> bool:
+    """True if this is absolute on *any* platform this program runs on."""
+    text = str(value)
+    return (
+        Path(text).is_absolute()
+        or bool(_DRIVE_ABSOLUTE.match(text))
+        or bool(_UNC.match(text))
+        or text.startswith("//")
+    )
+
+
 def assert_within_plugin(path: str | Path) -> Path:
     """Refuse any write path outside the plugin root.
 
     This is how the build proves it writes nothing outside its own folder.
     """
     root = plugin_root()
+    if looks_absolute_anywhere(path) and not Path(path).is_absolute():
+        # Absolute somewhere else. Refused here rather than quietly resolved
+        # into a subdirectory of the plugin, which is what Path() does with
+        # "C:/Windows/Temp/x" on POSIX.
+        raise ContainmentError(
+            "refused write outside the plugin root: " + str(path)
+            + "  (an absolute path for another platform)"
+        )
     resolved = Path(path).resolve()
     try:
         resolved.relative_to(root)
@@ -164,8 +196,21 @@ class Config:
     # ---- paths --------------------------------------------------------
 
     def resolve_path(self, value: str) -> Path:
-        """Absolute paths stay absolute; relative paths hang off the root."""
-        candidate = Path(value)
+        """Absolute paths stay absolute; relative paths hang off the root.
+
+        Separators are normalised first, and that is not tidiness. The shipped
+        `joe.config.json` writes `"research\\fixtures"`, which on Windows is a
+        path and on anything else is a single filename containing a backslash.
+        `Path("research\\fixtures").exists()` is therefore False off Windows,
+        the fixture corpus vanishes, and the research capability degrades to
+        UNAVAILABLE -- silently, because a missing directory is a legitimate
+        state that this adapter is built to tolerate. Four tests failed on it and
+        the config looked correct in every one of them.
+
+        A config written on one machine has to work on another: this program is
+        developed on Linux, tested in CI on Linux, and run on a Windows laptop.
+        """
+        candidate = Path(str(value).replace("\\", "/"))
         return candidate if candidate.is_absolute() else (self.root / candidate)
 
     @property
