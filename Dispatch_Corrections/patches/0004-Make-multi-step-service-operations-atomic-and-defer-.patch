@@ -1,0 +1,607 @@
+From 59c1534660ea94306aae23bf1e977ec6beb43478 Mon Sep 17 00:00:00 2001
+From: Dispatch Sandbox <jax1313@outlook.com>
+Date: Sat, 12 Sep 2026 19:15:47 +0000
+Subject: [PATCH 04/12] Make multi-step service operations atomic, and defer
+ sends past the commit
+
+Sixteen service operations wrote more than once, and every store call opened,
+committed and closed a connection of its own. add_milestone() wrote the
+milestone in one transaction, the load's new status in a second and the
+visibility record in a third, so a crash, a lock timeout, or a failure partway
+through left a milestone recorded against a load whose status never advanced --
+no rollback, no reconciliation pass, and nothing on any screen saying the two
+disagreed. On a laptop that gets closed mid-write, that window opens routinely.
+
+@atomic is the whole change at each call site, because db.unit_of_work() makes
+nested get_connection() calls join one transaction rather than open their own.
+No store function needed an argument, and none needed to know it was sharing.
+
+Notifications move behind db.after_commit(). Once these became atomic, sending
+inside one would have been wrong twice over: an email must not go out for work
+that then rolled back -- a delivery announced to a broker for a milestone the
+database discarded is the worst failure here and it is invisible -- and a
+thirty-second SMTP timeout must not be served while holding a write lock every
+other writer is queued behind.
+
+tests/test_atomic_service_operations.py injects a failure after the first
+successful write in each operation and asserts the first write is gone too.
+---
+ dispatch/db.py                          |  58 +++++-
+ dispatch/services.py                    |  63 +++++-
+ tests/test_atomic_service_operations.py | 260 ++++++++++++++++++++++++
+ 3 files changed, 375 insertions(+), 6 deletions(-)
+ create mode 100644 tests/test_atomic_service_operations.py
+
+diff --git a/dispatch/db.py b/dispatch/db.py
+index c34e657..f5754c8 100644
+--- a/dispatch/db.py
++++ b/dispatch/db.py
+@@ -456,6 +456,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
+     # lifecycle truth." The branch this was recovered from also initialised a
+     # `dispatch.security` schema here; that stack is superseded by the Portal
+     # PIN gate already on main (CF-03) and was deliberately not recovered.
++    from dispatch.authcounters import init_auth_counter_schema
+     from dispatch.connectors.audit import init_connector_schema
+     from dispatch.spine.db import init_spine_schema
+     from dispatch.tokens import init_token_schema
+@@ -463,6 +464,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
+     init_connector_schema(conn)
+     init_spine_schema(conn)
+     init_token_schema(conn)
++    # Failed-attempt counters. They live in SQLite rather than beside the PIN
++    # hash in its JSON store because a lost update on a lockout counter is not a
++    # cosmetic race -- see dispatch/authcounters.py.
++    init_auth_counter_schema(conn)
+ 
+ 
+ def _apply_migrations(conn: sqlite3.Connection) -> None:
+@@ -517,7 +522,7 @@ BUSY_TIMEOUT_MS = int(os.environ.get("DISPATCH_SQLITE_BUSY_TIMEOUT_MS", "5000"))
+ #: `schema_state` after a successful initialisation so a later connection can
+ #: tell "already built, and built by this version of the code" from "built by
+ #: an older one" with a single cheap read.
+-SCHEMA_REVISION = 1
++SCHEMA_REVISION = 2
+ 
+ #: Database paths this *process* has already initialised. The expensive part of
+ #: `_init_db` is not the work, it is that it ran on every one of the ~160
+@@ -669,16 +674,67 @@ def unit_of_work():
+ 
+     conn = _open()
+     _ACTIVE.conn = conn
++    _ACTIVE.after_commit = []
+     try:
+         yield conn
+         conn.commit()
++        committed = True
+     except Exception:
+         conn.rollback()
++        committed = False
+         raise
+     finally:
++        callbacks = list(getattr(_ACTIVE, "after_commit", None) or ())
++        # Back to None, not to an empty list: `after_commit()` distinguishes
++        # "a unit of work is collecting callbacks" from "there is none, run it
++        # now" by exactly this, and leaving a drained list behind made every
++        # later call outside a transaction queue onto a list nobody would run.
++        _ACTIVE.after_commit = None
+         _ACTIVE.conn = None
+         conn.close()
+ 
++    if committed:
++        _run_after_commit(callbacks)
++
++
++def after_commit(callback) -> None:
++    """Run `callback` once the surrounding unit of work has committed.
++
++    Two things this exists for, and they are the same thing seen from either end.
++
++    An email must not be sent for a transaction that then rolls back. Announcing
++    a delivery to a broker for a milestone the database subsequently discarded is
++    the worst failure this system can have, and it is invisible -- the send
++    succeeded.
++
++    And a transaction must not be held open across a network call. smtplib's
++    timeout here is thirty seconds; a write lock held for thirty seconds turns
++    every other writer into a "database is locked" error, including the driver
++    reporting the next milestone.
++
++    With no unit of work open the callback runs immediately, which is what every
++    existing single-write call site already did.
++    """
++    pending = getattr(_ACTIVE, "after_commit", None)
++    if pending is None:
++        callback()
++        return
++    pending.append(callback)
++
++
++def _run_after_commit(callbacks) -> None:
++    """Never let a post-commit side effect undo a committed transaction."""
++    import sys as _sys
++
++    for callback in callbacks:
++        try:
++            callback()
++        except Exception as exc:  # noqa: BLE001 - a side effect, not the work
++            print(
++                f"[dispatch.db] after-commit callback failed, continuing: {exc}",
++                file=_sys.stderr,
++            )
++
+ 
+ def in_unit_of_work() -> bool:
+     """True while this thread is inside `unit_of_work()`."""
+diff --git a/dispatch/services.py b/dispatch/services.py
+index ffef2ae..26e7e9b 100644
+--- a/dispatch/services.py
++++ b/dispatch/services.py
+@@ -6,6 +6,8 @@ Business logic for the full load lifecycle: create -> dispatch -> pickup
+ 
+ from __future__ import annotations
+ 
++import functools
++
+ from pathlib import Path
+ 
+ from dispatch.models import (
+@@ -36,11 +38,38 @@ from dispatch.models import (
+     Settlement,
+     _utc_now,
+ )
+-from dispatch import notifications, store
++from dispatch import db, notifications, store
++
+ 
+ import sys
+ 
+ 
++
++def atomic(fn):
++    """Run this service operation as one transaction.
++
++    An operation that writes twice was two transactions: `add_milestone()` wrote
++    the milestone, then the load's new status, then the visibility record, each
++    committing on its own. A crash, a lock timeout or a validation error between
++    them left a milestone recorded against a load whose status never advanced --
++    no rollback, no reconciliation pass, and nothing on any screen to say so. On
++    a laptop that gets closed mid-write that window opens routinely.
++
++    The decorator is the whole change at each call site. `db.unit_of_work()`
++    makes every nested `get_connection()` join one transaction instead of
++    opening its own, so the store functions below need no argument threading and
++    no awareness that they are now sharing. It is reentrant, so an atomic
++    operation may call another one.
++    """
++
++    @functools.wraps(fn)
++    def wrapper(*args, **kwargs):
++        with db.unit_of_work():
++            return fn(*args, **kwargs)
++
++    return wrapper
++
++
+ def _notify_safe(send) -> None:
+     """Run a notifications.notify_* call without letting an SMTP failure
+     turn an already-completed write into a false failure response.
+@@ -52,10 +81,18 @@ def _notify_safe(send) -> None:
+     the load *was* archived/delivered/invoiced; only the notification email
+     failed. Log and continue rather than propagate.
+     """
+-    try:
+-        send()
+-    except Exception as exc:  # noqa: BLE001 - deliberately broad: any transport failure, not just SMTP
+-        print(f"[dispatch.notifications] notify failed, continuing: {exc}", file=sys.stderr)
++    def _run():
++        try:
++            send()
++        except Exception as exc:  # noqa: BLE001 - any transport failure, not just SMTP
++            print(f"[dispatch.notifications] notify failed, continuing: {exc}", file=sys.stderr)
++
++    # Deferred until the surrounding transaction commits, and run immediately
++    # when there is none. Both reasons only appeared once these operations
++    # became atomic: an email must not go out for work that then rolled back,
++    # and a thirty-second SMTP timeout must not be served while holding a write
++    # lock every other writer is queued behind.
++    db.after_commit(_run)
+ 
+ 
+ _MILESTONE_TO_STATUS = {
+@@ -114,6 +151,7 @@ _MILESTONE_NEXT = {
+ }
+ 
+ 
++@atomic
+ def create_load(
+     customer: str,
+     broker_shipper: str = "",
+@@ -271,6 +309,7 @@ def delete_load(load_id: str) -> bool:
+     return store.delete_load(load_id)
+ 
+ 
++@atomic
+ def assign_driver(load_id: str, driver_id: str) -> dict | None:
+     """Assign an active driver to a load."""
+     load = store.get_load(load_id)
+@@ -283,6 +322,7 @@ def assign_driver(load_id: str, driver_id: str) -> dict | None:
+     return store.get_load(load_id)
+ 
+ 
++@atomic
+ def unassign_driver(load_id: str) -> dict | None:
+     """Remove driver assignment from a load."""
+     load = store.get_load(load_id)
+@@ -291,6 +331,7 @@ def unassign_driver(load_id: str) -> dict | None:
+     return store.update_load(load_id, driver_id="", driver="")
+ 
+ 
++@atomic
+ def assign_equipment(load_id: str, equipment_id: str) -> dict | None:
+     """Assign active equipment to a load."""
+     load = store.get_load(load_id)
+@@ -304,6 +345,7 @@ def assign_equipment(load_id: str, equipment_id: str) -> dict | None:
+     return store.get_load(load_id)
+ 
+ 
++@atomic
+ def unassign_equipment(load_id: str) -> dict | None:
+     """Remove equipment assignment from a load."""
+     load = store.get_load(load_id)
+@@ -328,6 +370,7 @@ def _validate_equipment_assignment(equipment_id: str) -> None:
+         raise ValueError(f"Equipment {equipment_id} is not active (status: {eqp['status']})")
+ 
+ 
++@atomic
+ def _try_auto_dispatch(load_id: str) -> None:
+     load = store.get_load(load_id)
+     if not load or load["status"] != "created":
+@@ -462,6 +505,7 @@ def _raise_transition_refusal_card(load_id: str, current: str, target: str, reas
+         print(f"[dispatch.services] {explanation} (card not raised: {exc})", file=sys.stderr)
+ 
+ 
++@atomic
+ def add_milestone(
+     load_id: str,
+     event_type: str,
+@@ -693,6 +737,7 @@ def delete_evidence(evidence_id: str) -> bool:
+     return store.delete_evidence(evidence_id)
+ 
+ 
++@atomic
+ def open_exception(
+     load_id: str,
+     exception_type: str = "other",
+@@ -732,6 +777,7 @@ def open_exception(
+     return result
+ 
+ 
++@atomic
+ def resolve_exception(
+     exception_id: str,
+     resolution_note: str = "",
+@@ -782,6 +828,7 @@ def update_exception(exception_id: str, **fields) -> dict | None:
+ _POD_ELIGIBLE_STATUSES = {"delivered", "completed", "archived"}
+ 
+ 
++@atomic
+ def generate_pod(
+     load_id: str,
+     recipient: str = "",
+@@ -871,6 +918,7 @@ def sanitize_payload_for_role(payload: dict, role: str) -> dict:
+     return comi_routing.sanitize_payload_for_role(payload, role)
+ 
+ 
++@atomic
+ def archive_load(load_id: str) -> dict:
+     load = store.get_load(load_id)
+     if not load:
+@@ -993,6 +1041,7 @@ def build_completion_packet(load_id: str) -> dict:
+     }
+ 
+ 
++@atomic
+ def confirm_rate(
+     load_id: str,
+     rate_amount: float,
+@@ -1184,6 +1233,7 @@ def update_settlement(load_id: str, **fields) -> dict | None:
+     return store.update_settlement(load_id, **fields)
+ 
+ 
++@atomic
+ def record_payment(
+     load_id: str,
+     payment_amount: float,
+@@ -1905,6 +1955,7 @@ def start_detention(
+     return store.create_detention(det)
+ 
+ 
++@atomic
+ def stop_detention(
+     detention_id: str,
+     ended_at: str = "",
+@@ -2295,6 +2346,7 @@ def list_suspect_ifta_fuel_purchases(
+     ]
+ 
+ 
++@atomic
+ def attach_ifta_fuel_evidence(
+     purchase_id: str,
+     file_data: bytes,
+@@ -2793,6 +2845,7 @@ def run_ifta_exception_detectors(year: int, quarter: int, vehicle_id: str = "")
+     return _run_ifta_exception_detectors_on_snapshot(snapshot, year, quarter, vehicle_id)
+ 
+ 
++@atomic
+ def submit_ifta_quarter_for_approval(year: int, quarter: int, vehicle_id: str = "") -> dict:
+     """Freezes the current computed report for this period into a new
+     IFTAReportApproval (status='draft') and emails the reviewer an
+diff --git a/tests/test_atomic_service_operations.py b/tests/test_atomic_service_operations.py
+new file mode 100644
+index 0000000..32e3b60
+--- /dev/null
++++ b/tests/test_atomic_service_operations.py
+@@ -0,0 +1,260 @@
++"""A service operation that writes twice either writes both or neither.
++
++Before this, every `store.*` call opened, committed and closed its own
++connection. `add_milestone()` wrote the milestone in one transaction, the load's
++new status in a second and the visibility record in a third, so a crash, a lock
++timeout, or a validation error partway through left a milestone recorded against
++a load whose status never advanced -- with no rollback, no reconciliation pass,
++and nothing on any screen to say the two disagreed.
++
++The suite never saw it because the suite is single-threaded, writes to a local
++temp file, and injects no failures. So these tests inject them: each one breaks a
++store function that runs *after* the first successful write and then asserts the
++first write is gone too.
++"""
++
++from __future__ import annotations
++
++import sqlite3
++
++import pytest
++
++from dispatch import db, services, store
++from dispatch.db import set_db_path
++
++
++@pytest.fixture
++def database(tmp_path):
++    set_db_path(tmp_path / "dispatch.db")
++    try:
++        yield
++    finally:
++        set_db_path(None)
++
++
++#: The milestone chain that legally reaches `delivered`. The status cascade is
++#: gated by validate_status_transition(), so skipping one of these does not
++#: advance the load and the delivery notification correctly never fires.
++_TO_DELIVERY = (
++    "dispatched", "en_route_pickup", "arrived_pickup", "loaded",
++    "departed_pickup", "in_transit", "arrived_delivery",
++)
++
++
++class Boom(RuntimeError):
++    """An injected failure, distinguishable from a real one."""
++
++
++def _break_after_first_call(monkeypatch, target_module, name):
++    """Let `name` succeed once, then raise. Mimics a lock timeout mid-operation."""
++    real = getattr(target_module, name)
++    state = {"calls": 0}
++
++    def flaky(*args, **kwargs):
++        state["calls"] += 1
++        if state["calls"] > 1:
++            raise Boom(f"injected failure in {name}")
++        return real(*args, **kwargs)
++
++    monkeypatch.setattr(target_module, name, flaky)
++    return state
++
++
++class TestAddMilestone:
++    def test_a_failure_writing_visibility_takes_the_milestone_with_it(
++        self, database, monkeypatch
++    ):
++        load = services.create_load(customer="Acme")
++        load_id = load["load_id"]
++        before = len(store.list_milestones(load_id))
++
++        def exploding_upsert(*_a, **_k):
++            raise Boom("injected failure in upsert_visibility")
++
++        monkeypatch.setattr(store, "upsert_visibility", exploding_upsert)
++
++        with pytest.raises(Boom):
++            services.add_milestone(load_id, "dispatched", note="left the yard")
++
++        assert len(store.list_milestones(load_id)) == before, (
++            "the milestone survived a failed operation: the load now has an event "
++            "recorded against a status that was never advanced"
++        )
++        assert store.get_load(load_id)["status"] == "created"
++
++    def test_a_failure_updating_the_load_leaves_no_milestone_behind(
++        self, database, monkeypatch
++    ):
++        load = services.create_load(customer="Acme")
++        load_id = load["load_id"]
++
++        def exploding_update(*_a, **_k):
++            raise Boom("injected failure in update_load")
++
++        monkeypatch.setattr(store, "update_load", exploding_update)
++
++        with pytest.raises(Boom):
++            services.add_milestone(load_id, "dispatched")
++
++        assert store.list_milestones(load_id) == []
++
++    def test_the_successful_path_still_writes_everything(self, database):
++        load = services.create_load(customer="Acme")
++        load_id = load["load_id"]
++        services.add_milestone(load_id, "dispatched")
++
++        assert len(store.list_milestones(load_id)) == 1
++        assert store.get_load(load_id)["status"] == "dispatched"
++        assert store.get_visibility(load_id)["current_status"] == "dispatched"
++
++
++class TestCreateLoad:
++    def test_a_failure_writing_visibility_leaves_no_orphan_load(self, database, monkeypatch):
++        def exploding_upsert(*_a, **_k):
++            raise Boom("injected failure in upsert_visibility")
++
++        monkeypatch.setattr(store, "upsert_visibility", exploding_upsert)
++        before = len(store.list_loads())
++
++        with pytest.raises(Boom):
++            services.create_load(customer="Orphan Freight")
++
++        assert len(store.list_loads()) == before, (
++            "a load exists with no visibility record: every surface that joins the "
++            "two now has a row it cannot render"
++        )
++
++
++class TestExceptions:
++    def test_a_failed_open_exception_writes_nothing(self, database, monkeypatch):
++        load = services.create_load(customer="Acme")
++        load_id = load["load_id"]
++
++        monkeypatch.setattr(
++            store, "upsert_visibility", lambda *a, **k: (_ for _ in ()).throw(Boom("x"))
++        )
++        with pytest.raises(Boom):
++            services.open_exception(load_id, exception_type="delay", description="late")
++
++        assert store.list_exceptions(load_id=load_id) == []
++
++    def test_a_failed_resolve_leaves_the_exception_open(self, database, monkeypatch):
++        load = services.create_load(customer="Acme")
++        load_id = load["load_id"]
++        exc = services.open_exception(load_id, exception_type="delay", description="late")
++
++        assert store.get_visibility(load_id) is not None  # the write we break is reached
++        monkeypatch.setattr(
++            store, "upsert_visibility", lambda *a, **k: (_ for _ in ()).throw(Boom("x"))
++        )
++        with pytest.raises(Boom):
++            services.resolve_exception(exc["exception_id"], resolution_note="cleared")
++
++        assert [e for e in store.list_exceptions(load_id=load_id) if e["exception_id"] == exc["exception_id"]][0]["status"] == "open", (
++            "the exception reads resolved while the visibility record still flags it open"
++        )
++
++
++class TestNotificationsAreNotSentForWorkThatRolledBack:
++    """The worst failure this system can have is invisible: an email that went out
++    for a delivery the database then discarded."""
++
++    def test_a_rolled_back_delivery_sends_nothing(self, database, monkeypatch):
++        load = services.create_load(customer="Acme")
++        load_id = load["load_id"]
++        for event in _TO_DELIVERY:
++            services.add_milestone(load_id, event)
++
++        sent = []
++        monkeypatch.setattr(
++            services.notifications, "notify_delivered",
++            lambda *a, **k: sent.append(a) or "sent",
++        )
++        monkeypatch.setattr(
++            store, "upsert_visibility", lambda *a, **k: (_ for _ in ()).throw(Boom("x"))
++        )
++
++        with pytest.raises(Boom):
++            services.add_milestone(load_id, "delivered")
++
++        assert sent == [], "a delivery notification went out for a transaction that rolled back"
++
++    def test_a_committed_delivery_does_send(self, database, monkeypatch):
++        load = services.create_load(customer="Acme")
++        load_id = load["load_id"]
++        for event in _TO_DELIVERY:
++            services.add_milestone(load_id, event)
++
++        sent = []
++        monkeypatch.setattr(
++            services.notifications, "notify_delivered",
++            lambda *a, **k: sent.append(a) or "sent",
++        )
++        services.add_milestone(load_id, "delivered")
++        assert len(sent) == 1
++
++    def test_a_send_that_fails_does_not_undo_the_committed_work(self, database, monkeypatch):
++        load = services.create_load(customer="Acme")
++        load_id = load["load_id"]
++        for event in _TO_DELIVERY:
++            services.add_milestone(load_id, event)
++
++        def exploding_send(*_a, **_k):
++            raise Boom("SMTP is down")
++
++        monkeypatch.setattr(services.notifications, "notify_delivered", exploding_send)
++        services.add_milestone(load_id, "delivered")  # must not raise
++
++        assert store.get_load(load_id)["status"] == "delivered"
++
++
++class TestUnitOfWorkItself:
++    def test_nested_units_commit_once_and_roll_back_together(self, database):
++        load = services.create_load(customer="Acme")
++
++        with pytest.raises(Boom):
++            with db.unit_of_work():
++                services.assign_driver_free_form = None  # noqa: B018 - no-op marker
++                store.update_load(load["load_id"], customer="Changed")
++                # an inner atomic operation joins rather than committing early
++                services.add_milestone(load["load_id"], "dispatched")
++                raise Boom("outer failure after an inner atomic operation succeeded")
++
++        reread = store.get_load(load["load_id"])
++        assert reread["customer"] == "Acme"
++        assert store.list_milestones(load["load_id"]) == []
++
++    def test_a_nested_get_connection_joins_rather_than_opening_a_second(self, database, monkeypatch):
++        opened = {"n": 0}
++        real = sqlite3.connect
++
++        def counting(*a, **k):
++            opened["n"] += 1
++            return real(*a, **k)
++
++        with db.unit_of_work():
++            monkeypatch.setattr(db.sqlite3, "connect", counting)
++            for _ in range(10):
++                with db.get_connection() as conn:
++                    conn.execute("SELECT 1").fetchone()
++
++        assert opened["n"] == 0
++
++    def test_after_commit_runs_immediately_outside_a_unit_of_work(self, database):
++        ran = []
++        db.after_commit(lambda: ran.append(1))
++        assert ran == [1]
++
++    def test_after_commit_does_not_leak_between_transactions(self, database):
++        """A drained callback list left behind would silently swallow every later send."""
++        with db.unit_of_work():
++            db.after_commit(lambda: None)
++        ran = []
++        db.after_commit(lambda: ran.append(1))
++        assert ran == [1], "a post-transaction callback was queued onto a list nobody drains"
++
++    def test_in_unit_of_work_reports_honestly(self, database):
++        assert db.in_unit_of_work() is False
++        with db.unit_of_work():
++            assert db.in_unit_of_work() is True
++        assert db.in_unit_of_work() is False
+-- 
+2.43.0
+

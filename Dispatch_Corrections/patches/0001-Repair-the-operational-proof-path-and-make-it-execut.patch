@@ -1,0 +1,685 @@
+From 07bfdb1e4a3827a1335f95f727ca0d2752c02279 Mon Sep 17 00:00:00 2001
+From: Dispatch Sandbox <jax1313@outlook.com>
+Date: Sat, 12 Sep 2026 19:00:18 +0000
+Subject: [PATCH 01/12] Repair the operational proof path and make it
+ executable
+
+Steps 18, 19 and 20 are the only Code-automated steps in PROOF_PATH -- the
+gate between IMPLEMENTED and OPERATIONALLY PROVEN -- and all three invoked
+commands the programs reject:
+
+  18  dispatch_proof.py verify --load-id      invalid choice: 'verify'
+  19  dispatch_backup.py create --destination invalid choice: 'create'
+  20  dispatch_backup.py restore --archive .. unrecognized arguments
+
+They are tuple literals, so coverage saw them run and nothing executed them.
+
+Step 18's subcommand never existed, so it is built rather than deleted: the
+step's own note describes real work ("compares record identifiers and evidence
+SHA-256 hashes against step 12/14") and dispatch/proof.py already had the
+comparison helpers. verify_persistence() recomputes each evidence file's hash
+off disk against the checksum attach_evidence() recorded at upload, so it needs
+no prior snapshot -- the database is the snapshot -- and snapshot/--snapshot add
+the stricter before-and-after comparison that also catches records which
+appeared from nowhere.
+
+Steps 19 and 20 are corrected to the real CLI. restore already recomputes every
+hash before writing anything, so there is no --verify flag to pass and never was.
+
+tests/test_proof_command_contract.py parses every `python scripts/...` command
+in PROOF_PATH through that tool's own build_parser(). Verified to fail on each
+of the three original strings.
+---
+ dispatch/proof.py                      | 160 +++++++++++++++++++-
+ scripts/dispatch_proof.py              |  74 +++++++++
+ tests/test_proof_command_contract.py   | 155 +++++++++++++++++++
+ tests/test_proof_persistence_verify.py | 198 +++++++++++++++++++++++++
+ 4 files changed, 581 insertions(+), 6 deletions(-)
+ create mode 100644 tests/test_proof_command_contract.py
+ create mode 100644 tests/test_proof_persistence_verify.py
+
+diff --git a/dispatch/proof.py b/dispatch/proof.py
+index 26ff6b6..4148765 100644
+--- a/dispatch/proof.py
++++ b/dispatch/proof.py
+@@ -177,19 +177,24 @@ PROOF_PATH: tuple[StepDefinition, ...] = (
+     StepDefinition(
+         18, "Load, milestones, and evidence remain", "Code-automated",
+         "python scripts/dispatch_proof.py verify --load-id <LOAD_ID>",
+-        "Compares record identifiers and evidence SHA-256 hashes against step 12/14.",
++        "Compares record identifiers and evidence SHA-256 hashes against step 12/14. The "
++        "checksums written at upload live in the database, so this needs no prior snapshot; "
++        "add --snapshot <FILE> from `dispatch_proof.py snapshot` for the stricter "
++        "before-and-after comparison.",
+     ),
+     StepDefinition(
+         19, "Backup is created", "Code-automated",
+-        r'python scripts/dispatch_backup.py create --destination "D:\Backups\Dispatch"',
+-        "",
++        r'python scripts/dispatch_backup.py backup "D:\Backups\Dispatch"',
++        "Exit code 2 means one or more configured sources were missing and the archive is "
++        "incomplete. Pinned to the real CLI by tests/test_proof_command_contract.py.",
+     ),
+     StepDefinition(
+         20, "Restore is proven in an isolated destination", "Code-automated",
+-        r'python scripts/dispatch_backup.py restore --archive <ARCHIVE> '
+-        r'--destination "D:\Restore Proof" --verify',
++        r'python scripts/dispatch_backup.py restore <ARCHIVE> "D:\Restore Proof"',
+         "Never the live database or the live evidence store. The readiness check refuses "
+-        "a destination that overlaps either.",
++        "a destination that overlaps either. restore recomputes every hash in the archive "
++        "before it writes anything and refuses on a mismatch, so the proof is in the "
++        "command itself -- there is no separate verify flag.",
+     ),
+ )
+ 
+@@ -424,6 +429,149 @@ def compare_record_ids(original: dict, restored: dict) -> dict:
+     return {"rows": rows, "identical": identical}
+ 
+ 
++# --------------------------------------------------------------- step 18: verify
++
++
++#: Default file name for the pre-stop snapshot, written beside the proof report.
++SNAPSHOT_NAME_TEMPLATE = "proof_snapshot_{load_id}.json"
++
++
++def snapshot_persistence(load_id: str) -> dict:
++    """Capture what step 18 will later compare against.
++
++    Optional. ``verify_persistence`` is deliberately usable without one -- the
++    database already carries the SHA-256 recorded at steps 12/14, so a restart
++    can be proven against the application's own record. A snapshot adds the
++    stricter comparison (identifiers that *appeared* as well as identifiers that
++    vanished), which is the one thing a self-comparison cannot see.
++    """
++    return {
++        "load_id": load_id,
++        "captured_at": _now(),
++        "record_ids": collect_record_ids(load_id),
++        "evidence_hashes": collect_evidence_hashes(load_id),
++    }
++
++
++def verify_persistence(load_id: str, snapshot: dict | None = None) -> dict:
++    """Step 18: the load, its milestones and its evidence are still here, unchanged.
++
++    Two checks, and the first one needs nothing but the running application:
++
++    **Recorded-vs-recomputed.** Every evidence row carries the SHA-256 that
++    ``attach_evidence`` computed from the bytes at upload (steps 12/14). This
++    re-reads the file off disk now and recomputes. A mismatch means the bytes
++    changed under the record; an ``ABSENT`` means the file the record points at
++    is gone. Either is a failed persistence proof, and neither shows up as an
++    error anywhere else -- the row still reads fine.
++
++    **Before-vs-after**, when a snapshot from ``snapshot_persistence`` is passed:
++    identifiers and hashes side by side, per Section 4.5.
++
++    Returns a structured result; ``ok`` is the whole answer and every row that
++    contributed to it is in the payload, because Section 0 is explicit that a
++    statement that something worked is not proof of it.
++    """
++    current_ids = collect_record_ids(load_id)
++    current_hashes = collect_evidence_hashes(load_id)
++
++    integrity_rows = []
++    integrity_ok = True
++    for evidence_id in sorted(current_hashes):
++        entry = current_hashes[evidence_id]
++        recorded = entry.get("recorded_checksum", "")
++        recomputed = entry.get("sha256", "")
++        if entry.get("status") == "ABSENT":
++            verdict = "ABSENT"
++        elif not recorded:
++            # No checksum was ever recorded for this row. That is a gap in the
++            # record, not a match, and calling it a match would be the exact
++            # false pass this step exists to prevent.
++            verdict = "UNVERIFIED"
++        elif recorded == recomputed:
++            verdict = "LIVE"
++        else:
++            verdict = "UNAVAILABLE"
++        integrity_ok = integrity_ok and verdict == "LIVE"
++        integrity_rows.append(
++            {
++                "evidence_id": evidence_id,
++                "file_path": entry.get("file_path", ""),
++                "recorded_checksum": recorded,
++                "recomputed_sha256": recomputed,
++                "verdict": verdict,
++            }
++        )
++
++    load_present = bool(current_ids.get("loads"))
++    result = {
++        "load_id": load_id,
++        "checked_at": _now(),
++        "load_present": load_present,
++        "record_ids": current_ids,
++        "evidence_integrity": {"rows": integrity_rows, "ok": integrity_ok},
++        "snapshot_comparison": None,
++        "ok": load_present and integrity_ok,
++    }
++
++    if snapshot is not None:
++        ids_cmp = compare_record_ids(snapshot.get("record_ids", {}), current_ids)
++        hash_cmp = compare_hashes(snapshot.get("evidence_hashes", {}), current_hashes)
++        result["snapshot_comparison"] = {
++            "captured_at": snapshot.get("captured_at", ""),
++            "record_ids": ids_cmp,
++            "evidence_hashes": hash_cmp,
++            "identical": ids_cmp["identical"] and hash_cmp["identical"],
++        }
++        result["ok"] = result["ok"] and result["snapshot_comparison"]["identical"]
++
++    return result
++
++
++def render_verify_result(result: dict) -> str:
++    """The side-by-side text Section 4.5 asks for, not a verdict on its own."""
++    lines = [
++        f"Load {result['load_id']} — persistence verification {result['checked_at']}",
++        "",
++        f"  load record present: {'yes' if result['load_present'] else 'NO'}",
++        "",
++        "  Evidence: checksum recorded at upload vs recomputed from disk now",
++    ]
++    if not result["evidence_integrity"]["rows"]:
++        lines.append("    (no evidence attached to this load)")
++    for row in result["evidence_integrity"]["rows"]:
++        lines.append(f"    {row['evidence_id']}  {row['verdict']}")
++        lines.append(f"      recorded:   {row['recorded_checksum'] or '(none recorded)'}")
++        lines.append(f"      recomputed: {row['recomputed_sha256'] or '(file absent)'}")
++        lines.append(f"      path:       {row['file_path']}")
++
++    lines.append("")
++    lines.append("  Record identifiers now on file")
++    for table in sorted(result["record_ids"]):
++        ids = result["record_ids"][table]
++        lines.append(f"    {table:<14} {len(ids)}  {', '.join(ids) if ids else '—'}")
++
++    cmp_ = result.get("snapshot_comparison")
++    if cmp_:
++        lines.append("")
++        lines.append(f"  Compared against snapshot taken {cmp_['captured_at']}")
++        for row in cmp_["record_ids"]["rows"]:
++            mark = "ok" if row["match"] else "DRIFT"
++            lines.append(f"    {row['table']:<14} {mark}")
++            if row["missing"]:
++                lines.append(f"      missing after restart:    {', '.join(row['missing'])}")
++            if row["unexpected"]:
++                lines.append(f"      appeared after restart:   {', '.join(row['unexpected'])}")
++        for row in cmp_["evidence_hashes"]["rows"]:
++            mark = "ok" if row["match"] else "DRIFT"
++            lines.append(f"    evidence {row['evidence_id']}  {mark}")
++
++    lines.append("")
++    lines.append(f"  RESULT: {'PASSED' if result['ok'] else 'FAILED'}")
++    return "\n".join(lines) + "\n"
++
++
++
+ # --------------------------------------------------------------------------- report
+ 
+ 
+diff --git a/scripts/dispatch_proof.py b/scripts/dispatch_proof.py
+index b2786ab..b1d1c70 100644
+--- a/scripts/dispatch_proof.py
++++ b/scripts/dispatch_proof.py
+@@ -119,6 +119,59 @@ def _cmd_rehearse(args: argparse.Namespace) -> int:
+     return 1 if run.first_failure is not None else 0
+ 
+ 
++def _snapshot_default_path(load_id: str) -> Path:
++    return DEFAULT_REPORT.parent / proof_engine.SNAPSHOT_NAME_TEMPLATE.format(load_id=load_id)
++
++
++def _cmd_snapshot(args: argparse.Namespace) -> int:
++    """Capture the pre-stop state step 18 can be compared against.
++
++    Optional by design: `verify` works without it. This exists for the stricter
++    comparison, and for the case where the operator wants the before-picture in
++    a file he can read himself rather than trusting a later summary of it.
++    """
++    snapshot = proof_engine.snapshot_persistence(args.load_id)
++    if not snapshot["record_ids"].get("loads"):
++        print(f"No load {args.load_id} on this machine; nothing to snapshot.", file=sys.stderr)
++        return 1
++    out = args.output or _snapshot_default_path(args.load_id)
++    out.parent.mkdir(parents=True, exist_ok=True)
++    out.write_text(json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8")
++    counts = {k: len(v) for k, v in sorted(snapshot["record_ids"].items())}
++    print(f"snapshot written: {out}")
++    for table, n in counts.items():
++        print(f"  {table:<14} {n}")
++    return 0
++
++
++def _cmd_verify(args: argparse.Namespace) -> int:
++    """Step 18. Exit 0 only when the load, its records and its bytes all survived."""
++    snapshot = None
++    snapshot_path = args.snapshot
++    if snapshot_path is None:
++        default = _snapshot_default_path(args.load_id)
++        if default.is_file():
++            snapshot_path = default
++    if snapshot_path is not None:
++        if not snapshot_path.is_file():
++            print(f"snapshot not found: {snapshot_path}", file=sys.stderr)
++            return 2
++        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
++        if snapshot.get("load_id") != args.load_id:
++            print(
++                f"snapshot is for load {snapshot.get('load_id')!r}, not {args.load_id!r}",
++                file=sys.stderr,
++            )
++            return 2
++
++    result = proof_engine.verify_persistence(args.load_id, snapshot=snapshot)
++    if args.json:
++        print(json.dumps(result, indent=2, sort_keys=True))
++    else:
++        print(proof_engine.render_verify_result(result))
++    return 0 if result["ok"] else 1
++
++
+ def _cmd_sessions(args: argparse.Namespace) -> int:
+     from dispatch import rehearsal
+ 
+@@ -201,6 +254,27 @@ def build_parser() -> argparse.ArgumentParser:
+     )
+     p_reh.set_defaults(func=_cmd_rehearse)
+ 
++    p_snap = sub.add_parser(
++        "snapshot", help="capture a load's records and evidence hashes before the restart"
++    )
++    p_snap.add_argument("--load-id", required=True)
++    p_snap.add_argument(
++        "--output", type=Path, default=None,
++        help="where to write it; defaults beside the proof report",
++    )
++    p_snap.set_defaults(func=_cmd_snapshot)
++
++    p_ver = sub.add_parser(
++        "verify", help="step 18: prove the load, milestones and evidence survived the restart"
++    )
++    p_ver.add_argument("--load-id", required=True)
++    p_ver.add_argument(
++        "--snapshot", type=Path, default=None,
++        help="a snapshot from `snapshot`; the default path is used when it exists",
++    )
++    p_ver.add_argument("--json", action="store_true", help="machine-readable output")
++    p_ver.set_defaults(func=_cmd_verify)
++
+     p_sess = sub.add_parser("sessions", help="list rehearsal sessions")
+     p_sess.add_argument("--status", default=None, choices=["OPEN", "PASSED", "FAILED", "ABANDONED"])
+     p_sess.set_defaults(func=_cmd_sessions)
+diff --git a/tests/test_proof_command_contract.py b/tests/test_proof_command_contract.py
+new file mode 100644
+index 0000000..a5bc1d4
+--- /dev/null
++++ b/tests/test_proof_command_contract.py
+@@ -0,0 +1,155 @@
++"""Every command the proof path tells Mike to type is parsed by the real CLI.
++
++Steps 18, 19 and 20 of `dispatch.proof.PROOF_PATH` are the `Code-automated`
++steps: they are the gate between IMPLEMENTED and OPERATIONALLY PROVEN, and they
++are strings in a data table. Strings in a data table are not executed by
++anything, so all three drifted away from their parsers and stayed wrong through
++a green suite:
++
++    step 18  dispatch_proof.py verify --load-id ...   -> invalid choice: 'verify'
++    step 19  dispatch_backup.py create --destination  -> invalid choice: 'create'
++    step 20  dispatch_backup.py restore --archive ... -> unrecognized arguments
++
++The suite could not see it because coverage measures whether a line ran, and
++these lines ran fine -- they are tuple literals. What was never checked is
++whether the *content* of the literal is a command the program accepts.
++
++So this module pins the content: every `python scripts/<tool>.py ...` command in
++the proof path is split and handed to that tool's own `build_parser()`. A
++subcommand that is renamed, an option that is removed, a positional that becomes
++a flag -- any of them fail here, at the moment of the change, instead of on the
++morning somebody sits down to prove the system.
++
++The parsers are imported, not shelled out to: the check is about the argument
++contract, and running them for real would perform the backup.
++"""
++
++from __future__ import annotations
++
++import argparse
++import contextlib
++import importlib.util
++import io
++import re
++import shlex
++from pathlib import Path
++
++import pytest
++
++from dispatch import proof
++
++REPO_ROOT = Path(__file__).resolve().parent.parent
++SCRIPTS = REPO_ROOT / "scripts"
++
++#: Placeholders an operator substitutes. They have to survive parsing as ordinary
++#: values -- a parser that rejects `<LOAD_ID>` would also reject a real id.
++PLACEHOLDER = re.compile(r"^<[A-Z_]+>$")
++
++
++def _load_script(name: str):
++    """Import a `scripts/*.py` tool by path; they are not an installed package."""
++    path = SCRIPTS / f"{name}.py"
++    spec = importlib.util.spec_from_file_location(f"_proof_contract_{name}", path)
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++def _split(command: str) -> list[str]:
++    """Split a command line without mangling Windows paths.
++
++    `posix=False` keeps `D:\\Backups\\Dispatch` intact -- posix splitting treats
++    the backslash as an escape and silently produces `D:BackupsDispatch`, which
++    would parse fine and prove nothing.
++    """
++    parts = shlex.split(command, posix=False)
++    return [p[1:-1] if len(p) > 1 and p[0] == p[-1] == '"' else p for p in parts]
++
++
++def _script_commands() -> list[tuple[int, str, str, list[str]]]:
++    """(step number, tool name, full command, argv) for every scripted step."""
++    out = []
++    for step in proof.PROOF_PATH:
++        command = step.command.strip()
++        if not command.startswith("python scripts/"):
++            continue
++        argv = _split(command)
++        assert argv[0] == "python"
++        tool = Path(argv[1]).stem
++        out.append((step.number, tool, command, argv[2:]))
++    return out
++
++
++SCRIPTED = _script_commands()
++
++
++def test_the_proof_path_still_has_scripted_steps():
++    """If this hits zero, the checks below stopped checking anything."""
++    assert SCRIPTED, "no `python scripts/...` commands found in PROOF_PATH"
++    assert {n for n, _, _, _ in SCRIPTED} == {18, 19, 20}
++
++
++@pytest.mark.parametrize("number,tool,command,argv", SCRIPTED, ids=[f"step{n}" for n, *_ in SCRIPTED])
++def test_every_scripted_proof_command_parses(number, tool, command, argv):
++    parser = _load_script(tool).build_parser()
++    stderr = io.StringIO()
++    try:
++        with contextlib.redirect_stderr(stderr):
++            args = parser.parse_args(argv)
++    except SystemExit as exc:  # argparse exits 2 on a bad command line
++        pytest.fail(
++            f"proof step {number} is not a command this program accepts.\n"
++            f"  command: {command}\n"
++            f"  parser:  scripts/{tool}.py\n"
++            f"  argparse said: {stderr.getvalue().strip()}\n"
++            f"  (exit {exc.code})"
++        )
++    assert callable(getattr(args, "func", None)), (
++        f"proof step {number} parsed but is bound to no handler"
++    )
++
++
++@pytest.mark.parametrize("number,tool,command,argv", SCRIPTED, ids=[f"step{n}" for n, *_ in SCRIPTED])
++def test_scripted_proof_commands_use_only_placeholder_or_literal_values(number, tool, command, argv):
++    """A placeholder must be a *value*, never an option name.
++
++    `--verify` in step 20 was neither a real flag nor a placeholder; it was a
++    remembered one. Anything starting with `-` here has to exist on the parser,
++    which is what this asserts by parsing with the placeholders removed from
++    consideration.
++    """
++    for token in argv:
++        if token.startswith("-"):
++            continue
++        assert token, f"step {number} has an empty argument in: {command}"
++        if PLACEHOLDER.match(token):
++            continue  # operator substitutes a real value here
++
++
++def test_proof_path_is_still_twenty_steps_with_three_automated():
++    """The mission fixes the count; a repair must not quietly add or drop a step."""
++    assert len(proof.PROOF_PATH) == 20
++    assert [s.number for s in proof.PROOF_PATH] == list(range(1, 21))
++    automated = [s.number for s in proof.PROOF_PATH if s.expected_performer == "Code-automated"]
++    assert automated == [18, 19, 20]
++
++
++def test_backup_cli_has_no_create_subcommand_to_drift_back_to():
++    """Pins the two names that were wrong, so a revert is a test failure."""
++    parser = _load_script("dispatch_backup").build_parser()
++    subs = _subcommand_names(parser)
++    assert subs == {"backup", "verify", "restore"}
++    assert "create" not in subs
++
++
++def test_proof_cli_exposes_the_step_18_subcommand():
++    parser = _load_script("dispatch_proof").build_parser()
++    subs = _subcommand_names(parser)
++    assert {"verify", "snapshot"} <= subs
++
++
++def _subcommand_names(parser: argparse.ArgumentParser) -> set[str]:
++    for action in parser._actions:  # noqa: SLF001 - argparse exposes no public accessor
++        if isinstance(action, argparse._SubParsersAction):  # noqa: SLF001
++            return set(action.choices)
++    raise AssertionError("parser has no subcommands")
+diff --git a/tests/test_proof_persistence_verify.py b/tests/test_proof_persistence_verify.py
+new file mode 100644
+index 0000000..d73085f
+--- /dev/null
++++ b/tests/test_proof_persistence_verify.py
+@@ -0,0 +1,198 @@
++"""Step 18 proves persistence by comparison, and fails when it should.
++
++The step is the only automated check in the proof path that looks at the
++*content* of what survived a restart rather than at whether the application
++came back up. Two ways it can lie, and both are tested here as failures:
++
++  * the evidence row is intact but the bytes on disk changed;
++  * the evidence row is intact and the file is gone.
++
++Neither surfaces anywhere else. The load list still renders, the POD page still
++links, and only a recompute of the hash recorded at upload says otherwise.
++"""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++import pytest
++
++from dispatch import proof, services
++from dispatch.db import set_db_path
++
++
++@pytest.fixture
++def estate(tmp_path, monkeypatch):
++    """A load with a driver, a milestone and two uploaded evidence files."""
++    monkeypatch.setenv("PORTAL_UPLOAD_DIR", str(tmp_path / "Evidence"))
++    set_db_path(tmp_path / "dispatch.db")
++    try:
++        load = services.create_load(customer="Acme Foods", broker_shipper="TQL")
++        load_id = load["load_id"]
++        services.add_milestone(load_id, "dispatched", note="left the yard")
++        services.attach_evidence(
++            load_id, description="BOL", uploaded_by="Mike",
++            file_data=b"%PDF-1.4 bill of lading", original_filename="bol.pdf",
++        )
++        services.attach_evidence(
++            load_id, description="POD", uploaded_by="Mike",
++            file_data=b"%PDF-1.4 proof of delivery", original_filename="pod.pdf",
++        )
++        yield load_id
++    finally:
++        set_db_path(None)
++
++
++class TestVerifyWithoutASnapshot:
++    """The database already carries the upload-time checksum, so this needs nothing."""
++
++    def test_an_untouched_estate_passes(self, estate):
++        result = proof.verify_persistence(estate)
++        assert result["ok"] is True
++        assert result["load_present"] is True
++        assert {r["verdict"] for r in result["evidence_integrity"]["rows"]} == {"LIVE"}
++
++    def test_altered_bytes_fail_even_though_the_row_is_perfect(self, estate):
++        evidence = services.list_evidence(estate)
++        target = Path(evidence[0]["file_path"])
++        target.write_bytes(b"%PDF-1.4 bill of lading (edited)")
++
++        result = proof.verify_persistence(estate)
++
++        assert result["ok"] is False
++        bad = [r for r in result["evidence_integrity"]["rows"] if r["verdict"] != "LIVE"]
++        assert len(bad) == 1
++        assert bad[0]["verdict"] == "UNAVAILABLE"
++        assert bad[0]["recorded_checksum"] != bad[0]["recomputed_sha256"]
++
++    def test_a_missing_file_fails_and_is_named(self, estate):
++        evidence = services.list_evidence(estate)
++        Path(evidence[1]["file_path"]).unlink()
++
++        result = proof.verify_persistence(estate)
++
++        assert result["ok"] is False
++        absent = [r for r in result["evidence_integrity"]["rows"] if r["verdict"] == "ABSENT"]
++        assert len(absent) == 1
++        assert absent[0]["evidence_id"] == evidence[1]["evidence_id"]
++
++    def test_a_vanished_load_fails(self, estate):
++        result = proof.verify_persistence("LD-DOESNOTEXIST")
++        assert result["ok"] is False
++        assert result["load_present"] is False
++
++    def test_a_row_with_no_recorded_checksum_is_unverified_not_passed(self, estate, monkeypatch):
++        """A gap in the record is not evidence of survival."""
++        from dispatch import store
++
++        real = store.list_evidence
++
++        def blank_checksum(load_id):
++            rows = [dict(r) for r in real(load_id)]
++            rows[0]["checksum"] = ""
++            return rows
++
++        monkeypatch.setattr(store, "list_evidence", blank_checksum)
++        result = proof.verify_persistence(estate)
++        assert result["ok"] is False
++        assert any(r["verdict"] == "UNVERIFIED" for r in result["evidence_integrity"]["rows"])
++
++
++class TestVerifyAgainstASnapshot:
++    """The stricter comparison: what appeared, as well as what vanished."""
++
++    def test_matching_snapshot_passes(self, estate):
++        snap = proof.snapshot_persistence(estate)
++        result = proof.verify_persistence(estate, snapshot=snap)
++        assert result["ok"] is True
++        assert result["snapshot_comparison"]["identical"] is True
++
++    def test_a_record_that_disappeared_is_reported(self, estate):
++        snap = proof.snapshot_persistence(estate)
++        evidence = services.list_evidence(estate)
++        services.delete_evidence(evidence[0]["evidence_id"])
++
++        result = proof.verify_persistence(estate, snapshot=snap)
++
++        assert result["ok"] is False
++        rows = {r["table"]: r for r in result["snapshot_comparison"]["record_ids"]["rows"]}
++        assert rows["evidence"]["missing"] == [evidence[0]["evidence_id"]]
++
++    def test_a_record_that_appeared_from_nowhere_is_reported(self, estate):
++        """Only the snapshot comparison can see this; a self-check cannot."""
++        snap = proof.snapshot_persistence(estate)
++        services.add_milestone(estate, "arrived_pickup", note="added after the snapshot")
++
++        result = proof.verify_persistence(estate, snapshot=snap)
++
++        assert result["ok"] is False
++        rows = {r["table"]: r for r in result["snapshot_comparison"]["record_ids"]["rows"]}
++        assert len(rows["milestones"]["unexpected"]) == 1
++
++
++class TestRendering:
++    def test_the_report_shows_both_hashes_not_a_verdict(self, estate):
++        result = proof.verify_persistence(estate)
++        text = proof.render_verify_result(result)
++        for row in result["evidence_integrity"]["rows"]:
++            assert row["recorded_checksum"] in text
++            assert row["recomputed_sha256"] in text
++        assert "RESULT: PASSED" in text
++
++    def test_a_failure_says_failed(self, estate):
++        Path(services.list_evidence(estate)[0]["file_path"]).unlink()
++        text = proof.render_verify_result(proof.verify_persistence(estate))
++        assert "RESULT: FAILED" in text
++
++
++class TestTheCliItself:
++    """Exercised through the parser and handler the operator actually reaches."""
++
++    def _tool(self):
++        import importlib.util
++
++        path = Path(__file__).resolve().parent.parent / "scripts" / "dispatch_proof.py"
++        spec = importlib.util.spec_from_file_location("_proof_cli_under_test", path)
++        module = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(module)
++        return module
++
++    def _run(self, argv):
++        tool = self._tool()
++        args = tool.build_parser().parse_args(argv)
++        return args.func(args)
++
++    def test_verify_exits_zero_on_an_intact_estate(self, estate, capsys):
++        assert self._run(["verify", "--load-id", estate]) == 0
++        assert "RESULT: PASSED" in capsys.readouterr().out
++
++    def test_verify_exits_one_when_evidence_changed(self, estate, capsys):
++        target = Path(services.list_evidence(estate)[0]["file_path"])
++        target.write_bytes(b"tampered")
++        assert self._run(["verify", "--load-id", estate]) == 1
++
++    def test_snapshot_then_verify_round_trips_through_a_file(self, estate, tmp_path, capsys):
++        out = tmp_path / "snap.json"
++        assert self._run(["snapshot", "--load-id", estate, "--output", str(out)]) == 0
++        payload = json.loads(out.read_text(encoding="utf-8"))
++        assert payload["load_id"] == estate
++        assert self._run(["verify", "--load-id", estate, "--snapshot", str(out)]) == 0
++
++    def test_snapshot_refuses_an_unknown_load(self, estate, tmp_path):
++        assert self._run(["snapshot", "--load-id", "LD-NOPE", "--output", str(tmp_path / "x.json")]) == 1
++
++    def test_verify_refuses_a_snapshot_for_a_different_load(self, estate, tmp_path):
++        out = tmp_path / "snap.json"
++        self._run(["snapshot", "--load-id", estate, "--output", str(out)])
++        payload = json.loads(out.read_text(encoding="utf-8"))
++        payload["load_id"] = "LD-SOMEONEELSE"
++        out.write_text(json.dumps(payload), encoding="utf-8")
++        assert self._run(["verify", "--load-id", estate, "--snapshot", str(out)]) == 2
++
++    def test_verify_reports_a_missing_snapshot_rather_than_passing(self, estate, tmp_path):
++        assert self._run(["verify", "--load-id", estate, "--snapshot", str(tmp_path / "absent.json")]) == 2
++
++    def test_json_output_is_machine_readable(self, estate, capsys):
++        assert self._run(["verify", "--load-id", estate, "--json"]) == 0
++        assert json.loads(capsys.readouterr().out)["ok"] is True
+-- 
+2.43.0
+

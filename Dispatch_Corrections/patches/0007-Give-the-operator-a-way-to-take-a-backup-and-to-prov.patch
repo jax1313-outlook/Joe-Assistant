@@ -1,0 +1,1126 @@
+From 39bed432cdf669650ab9689a53c2c7cc807e1184 Mon Sep 17 00:00:00 2001
+From: Dispatch Sandbox <jax1313@outlook.com>
+Date: Sat, 12 Sep 2026 19:41:19 +0000
+Subject: [PATCH 07/12] Give the operator a way to take a backup, and to prove
+ one
+
+926 lines of backup engine, a manifest, SHA-256 verification, a safe restore
+that repoints stored file paths, and a status reporter -- and nothing in the
+product that took one. No portal route, no template, no launcher command, no
+scheduled task. The only in-product caller of create_backup() was
+dispatch/proof.py, whose own commands did not run. The whole estate -- SQLite,
+twelve JSON stores and every uploaded evidence file -- sat on one laptop behind
+Mike remembering a script path that appeared in no menu.
+
+Added, all calling the same engine so there is one implementation and one answer:
+
+  [B] Back Up Now / [R] Prove a Restore   on the launcher menu (lettered,
+                                          per the convention the eight
+                                          numbered controls established)
+  python -m dispatch_launcher backup | prove-restore | schedule-backup
+  python scripts/dispatch_backup.py prove <archive> <scratch>
+  /maintenance                             in the portal, with both buttons
+
+schedule-backup prints the schtasks and cron lines rather than running them.
+Registering a task writes to the machine outside Dispatch's own folders, and the
+program does not do that to somebody's computer unasked -- but making the
+operator invent the command is how a backup never gets scheduled at all.
+
+The honesty rule in dispatch_launcher/backups.py is kept and is now enforced
+rather than merely unreachable. A restore this program performs records
+performed_by = Code-automated, and the status stays UNVERIFIED with the detail
+upgraded to say what was actually done: the archive restored into an isolated
+destination and every hash matched. VERIFIED still requires a person who opened
+the restored Dispatch and typed their name. A record with no performed_by at all
+predates the program being able to perform one, so it keeps its VERIFIED
+meaning -- that field could only have been written by hand.
+---
+ dispatch_launcher/backup_actions.py  | 300 +++++++++++++++++++++++++++
+ dispatch_launcher/backups.py         |  35 +++-
+ dispatch_launcher/cli.py             |  39 +++-
+ dispatch_launcher/glyphs.py          |   3 +-
+ portal/routes/__init__.py            |   2 +
+ portal/routes/maintenance.py         |  90 ++++++++
+ portal/static/style.css              |  18 ++
+ portal/templates/base.html           |  13 ++
+ portal/templates/maintenance.html    |  81 ++++++++
+ scripts/dispatch_backup.py           |  38 ++++
+ tests/test_backup_activation.py      | 233 +++++++++++++++++++++
+ tests/test_control_center.py         |  25 ++-
+ tests/test_proof_command_contract.py |   7 +-
+ 13 files changed, 871 insertions(+), 13 deletions(-)
+ create mode 100644 dispatch_launcher/backup_actions.py
+ create mode 100644 portal/routes/maintenance.py
+ create mode 100644 portal/templates/maintenance.html
+ create mode 100644 tests/test_backup_activation.py
+
+diff --git a/dispatch_launcher/backup_actions.py b/dispatch_launcher/backup_actions.py
+new file mode 100644
+index 0000000..a4fba7c
+--- /dev/null
++++ b/dispatch_launcher/backup_actions.py
+@@ -0,0 +1,300 @@
++"""Taking a backup, and proving one -- from the launcher, where Mike is.
++
++`dispatch/backup.py` is 926 lines of capture, manifest, SHA-256 verification,
++safe restore and stored-path repointing. `dispatch_launcher/backups.py` reports
++on the result. Between the two there was nothing that *took* one: no portal
++route, no template, no launcher command, no scheduled task. The only caller of
++`create_backup` inside the product was `dispatch/proof.py`, and the only
++instruction anywhere was a sentence in the status text telling the operator to
++type a script path from memory.
++
++So the whole estate -- SQLite, twelve JSON stores, and every uploaded evidence
++file -- was protected by Mike remembering a command that appeared in no menu.
++
++This module is the missing middle. It does none of the work itself: every
++decision about what is captured and whether a restore is safe stays in the
++engine, so what the launcher does is exactly what the suite exercises.
++
++**On the verification record.** `backups.py` says, correctly, that nothing here
++writes it "by design: it is a record of a human action, and manufacturing it is
++precisely the kind of claim this program forbids." That rule is kept. What
++`prove_restore` writes is a record that says who performed it -- `Code-automated`
++unless a person passes their own identity -- and `backups.py` now reads that
++field: a machine-performed restore leaves the state at UNVERIFIED with the detail
++upgraded to say what was actually done, and only a person's confirmation reaches
++VERIFIED. The program can prove the archive restores and hashes. It cannot
++prove the restored estate works, because that is somebody looking at it.
++"""
++
++from __future__ import annotations
++
++import json
++import os
++import shutil
++import sys
++import tempfile
++from dataclasses import dataclass
++from datetime import datetime, timezone
++from pathlib import Path
++
++from dispatch_launcher import backups, locations
++
++#: What `performed_by` says when nobody claimed it. Matches
++#: `dispatch.proof.PERFORMERS`, so the two records read the same way.
++CODE_AUTOMATED = "Code-automated"
++
++
++@dataclass(frozen=True)
++class BackupActionResult:
++    ok: bool
++    summary: str
++    detail: str = ""
++    archive: str | None = None
++    evidence: dict | None = None
++
++    def render(self) -> str:
++        head = f"  {'OK' if self.ok else 'FAILED'}  {self.summary}"
++        if not self.detail:
++            return head
++        body = "\n".join(f"    {line}" for line in self.detail.splitlines())
++        return f"{head}\n{body}"
++
++
++def _utc_now() -> str:
++    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
++
++
++def resolve_backup_dir(explicit: str | Path | None = None) -> Path | None:
++    """Where backups go. Never guessed.
++
++    An unset DISPATCH_BACKUP_DIR is UNCONFIGURED, not `D:\\Backups`: inventing a
++    plausible folder and reporting "no backups found" would tell Mike his
++    backups are missing when the launcher was looking somewhere nobody chose.
++    """
++    if explicit:
++        return Path(explicit)
++    configured = os.environ.get("DISPATCH_BACKUP_DIR")
++    return Path(configured) if configured else None
++
++
++def create(destination: str | Path | None = None, *, compress: bool = False) -> BackupActionResult:
++    """Take a backup now."""
++    target = resolve_backup_dir(destination)
++    if target is None:
++        return BackupActionResult(
++            False,
++            "No backup location is configured.",
++            "Set DISPATCH_BACKUP_DIR to the folder backups should be written to,\n"
++            "then run this again. Dispatch will not choose a folder on your machine.",
++        )
++
++    from dispatch import backup as engine
++
++    try:
++        result = engine.create_backup(target, compress=compress)
++    except Exception as exc:  # noqa: BLE001 - reported, never swallowed
++        return BackupActionResult(False, "The backup did not complete.", str(exc))
++
++    lines = [f"{result.file_count} files, {result.total_bytes:,} bytes"]
++    for absent in result.absent_sources:
++        lines.append(f"MISSING: {absent['roles']} -> {absent['path']} ({absent['reason']})")
++    for note in result.notes:
++        lines.append(f"note: {note}")
++    lines.append("")
++    lines.append("This backup has not been restored, so it is not yet known to be usable.")
++    lines.append("Prove it with:  python -m dispatch_launcher prove-restore")
++
++    return BackupActionResult(
++        bool(result.ok),
++        ("Backup written to " if result.ok else "Backup incomplete: ") + str(result.archive_path),
++        "\n".join(lines),
++        archive=str(result.archive_path),
++        evidence={"file_count": result.file_count, "total_bytes": result.total_bytes},
++    )
++
++
++def latest_archive(directory: Path) -> Path | None:
++    candidates = backups._archive_candidates(directory)  # noqa: SLF001 - same package
++    if not candidates:
++        return None
++    return max(candidates, key=lambda p: p.stat().st_mtime)
++
++
++def verify(archive: str | Path | None = None) -> BackupActionResult:
++    """Recompute every hash in an archive. Says nothing about restorability."""
++    from dispatch import backup as engine
++
++    target = Path(archive) if archive else None
++    if target is None:
++        directory = resolve_backup_dir()
++        if directory is None or not directory.is_dir():
++            return BackupActionResult(False, "No backup location is configured.")
++        target = latest_archive(directory)
++        if target is None:
++            return BackupActionResult(False, f"No Dispatch backup archives in {directory}.")
++
++    result = engine.verify(target)
++    return BackupActionResult(
++        result.ok,
++        f"{target}: {result.describe()}",
++        "A hash check proves the archive is intact. It does not prove it restores.",
++        archive=str(target),
++    )
++
++
++def prove_restore(
++    archive: str | Path | None = None,
++    destination: str | Path | None = None,
++    *,
++    confirmed_by: str | None = None,
++    keep: bool = False,
++) -> BackupActionResult:
++    """Restore into an isolated scratch destination and record what happened.
++
++    The destination is checked by `dispatch.readiness.check_restore_destination`
++    before anything is written -- it must be empty and must overlap neither the
++    live database nor the live evidence store. Restoring into the live paths is
++    prohibited outright, and the gate runs before the step rather than being
++    remembered during it.
++    """
++    from dispatch import backup as engine
++    from dispatch import readiness
++
++    directory = resolve_backup_dir()
++    target = Path(archive) if archive else (latest_archive(directory) if directory and directory.is_dir() else None)
++    if target is None:
++        return BackupActionResult(
++            False,
++            "No backup to prove.",
++            "Take one first:  python -m dispatch_launcher backup",
++        )
++
++    scratch_created = False
++    if destination is None:
++        destination = Path(tempfile.mkdtemp(prefix="dispatch-restore-proof-"))
++        scratch_created = True
++    destination = Path(destination)
++    destination.mkdir(parents=True, exist_ok=True)
++
++    try:
++        check = readiness.check_restore_destination(
++            destination, against=readiness.live_paths()
++        )
++        if not check.ok:
++            return BackupActionResult(False, "Restore destination refused.", check.detail)
++
++        try:
++            result = engine.restore(target, destination)
++        except Exception as exc:  # noqa: BLE001
++            return BackupActionResult(False, "The restore failed.", f"{type(exc).__name__}: {exc}")
++
++        record = {
++            "archive": backups._archive_name(target),  # noqa: SLF001 - same package
++            "archive_path": str(target),
++            "restored_at": _utc_now(),
++            "restored_to": str(destination),
++            "files_restored": len(result.restored),
++            "database_restored": bool(result.database_path),
++            "paths_rehomed": result.paths_rehomed,
++            # The whole point of this field. `backups.py` will not render
++            # VERIFIED on a machine's say-so, and this is what it reads.
++            "performed_by": confirmed_by or CODE_AUTOMATED,
++            "verified_scope": (
++                "restored into an isolated destination; every manifest hash recomputed"
++                if not confirmed_by
++                else "restored into an isolated destination, and the restored estate "
++                     "was opened and confirmed working by the person named"
++            ),
++        }
++        written = _write_verification(directory or target.parent, target, record)
++
++        detail = [
++            f"restored {len(result.restored)} files to {destination}",
++            f"verification record: {written}",
++        ]
++        if result.paths_rehomed:
++            detail.append(f"repointed {result.paths_rehomed} stored file paths")
++        if not confirmed_by:
++            detail.append(
++                "Recorded as Code-automated. The archive restores and every hash matches;"
++            )
++            detail.append(
++                "that the restored Dispatch actually works is still for a person to confirm."
++            )
++        return BackupActionResult(
++            True, "Restore proven in an isolated destination.", "\n".join(detail),
++            archive=str(target), evidence=record,
++        )
++    finally:
++        if scratch_created and not keep:
++            shutil.rmtree(destination, ignore_errors=True)
++
++
++def _write_verification(directory: Path, archive: Path, record: dict) -> Path:
++    """Beside the archive, named for it, so it can never be read as evidence
++    about a different backup."""
++    directory.mkdir(parents=True, exist_ok=True)
++    name = backups._archive_name(archive)  # noqa: SLF001 - same package
++    path = directory / f"{name}.{backups.VERIFICATION_NAME}"
++    path.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
++    return path
++
++
++def status_line() -> str:
++    directory = resolve_backup_dir()
++    return backups.backup_status(directory).describe()
++
++
++# ---------------------------------------------------------------- scheduling
++
++
++WINDOWS_TASK_NAME = "Dispatch Nightly Backup"
++
++
++def schedule_command(*, hour: int = 2, minute: int = 0) -> dict:
++    """The exact command to register a nightly backup, per platform.
++
++    Printed rather than run. Registering a scheduled task writes to the machine
++    outside Dispatch's own folders, and the program does not do that to somebody's
++    computer without being asked -- but making the operator invent the command is
++    how the backup never gets scheduled at all.
++    """
++    python = sys.executable or "python"
++    module = "-m dispatch_launcher backup"
++    directory = resolve_backup_dir()
++    return {
++        "windows": (
++            f'schtasks /Create /TN "{WINDOWS_TASK_NAME}" /SC DAILY '
++            f'/ST {hour:02d}:{minute:02d} /TR "\\"{python}\\" {module}" /F'
++        ),
++        "windows_remove": f'schtasks /Delete /TN "{WINDOWS_TASK_NAME}" /F',
++        "cron": f"{minute} {hour} * * *  {python} {module}",
++        "backup_dir": str(directory) if directory else None,
++        "note": (
++            "The scheduled task inherits the account's environment, so "
++            "DISPATCH_BACKUP_DIR must be set for the machine (setx /M) or the "
++            "task will run and find no configured location."
++        ),
++    }
++
++
++def render_schedule() -> str:
++    plan = schedule_command()
++    lines = ["  To run a backup every night at 02:00:", ""]
++    lines.append("  Windows (run as Administrator):")
++    lines.append(f"    {plan['windows']}")
++    lines.append("")
++    lines.append("  Linux / macOS (crontab -e):")
++    lines.append(f"    {plan['cron']}")
++    lines.append("")
++    if plan["backup_dir"]:
++        lines.append(f"  Backups will be written to: {plan['backup_dir']}")
++    else:
++        lines.append("  DISPATCH_BACKUP_DIR is not set. Set it first, or the task will")
++        lines.append("  run every night and write nothing.")
++    lines.append("")
++    lines.append(f"  {plan['note']}")
++    lines.append("")
++    lines.append("  To remove it later:")
++    lines.append(f"    {plan['windows_remove']}")
++    return "\n".join(lines)
+diff --git a/dispatch_launcher/backups.py b/dispatch_launcher/backups.py
+index 7abd885..9cdbe8c 100644
+--- a/dispatch_launcher/backups.py
++++ b/dispatch_launcher/backups.py
+@@ -212,6 +212,37 @@ def backup_status(backup_dir: str | Path | None) -> BackupStatus:
+             ),
+         )
+ 
++    # Who performed the restore decides the state, and it always did -- what
++    # changed is that something in this program can now perform one. A machine
++    # can prove the archive restores into an isolated destination and that every
++    # hash matches. It cannot prove the restored Dispatch works, because that is
++    # a person opening it and looking. So a Code-automated record raises the
++    # detail and leaves the state at UNVERIFIED; only a named human reaches
++    # VERIFIED. Manufacturing the second from the first is the exact claim this
++    # module was written to refuse.
++    # An *absent* performed_by is not treated as a machine record. Until this
++    # program could perform a restore at all, the only way one of these files
++    # could exist was a person writing it, so an unlabelled record is that
++    # person's and keeping it VERIFIED is the honest reading of it. Going
++    # forward every record carries the field, so the ambiguity does not recur.
++    performed_by = str(verification.get("performed_by", "")).strip()
++    if performed_by == "Code-automated":
++        return BackupStatus(
++            state=UNVERIFIED,
++            location=str(newest),
++            created_at=created_at,
++            created_at_source=created_source,
++            verification=verification,
++            detail=(
++                "This backup was restored into an isolated destination by the program on "
++                f"{verification.get('restored_at', 'an unrecorded date')} and every hash "
++                "matched. Nobody has opened the restored Dispatch and confirmed it works, "
++                "so it is not VERIFIED. Do that and record it with:  "
++                "python -m dispatch_launcher prove-restore --confirmed-by \"Mike\""
++            ),
++        )
++
++    who = f"by {performed_by} " if performed_by else ""
+     return BackupStatus(
+         state=VERIFIED,
+         location=str(newest),
+@@ -219,7 +250,7 @@ def backup_status(backup_dir: str | Path | None) -> BackupStatus:
+         created_at_source=created_source,
+         verification=verification,
+         detail=(
+-            "A restore verification record exists for this backup: "
+-            f"{verification.get('record_path')}"
++            f"A restore verification record exists for this backup, recorded {who}"
++            f"({verification.get('record_path')})."
+         ),
+     )
+diff --git a/dispatch_launcher/cli.py b/dispatch_launcher/cli.py
+index 4ad8eff..f0b8c0d 100644
+--- a/dispatch_launcher/cli.py
++++ b/dispatch_launcher/cli.py
+@@ -65,8 +65,14 @@ MENU_ITEMS: tuple[tuple[str, str, str, str], ...] = (
+ #: all: `bootstrap_authority()` refuses once an identity exists, so the only way back
+ #: in was deleting identity.json by hand. Ruling recorded in DECISION_LOG.md
+ #: 2026-08-25.
++#: Back Up Now is lettered for the same reason Reset PIN is, and it is here at
++#: all because until now nothing in the product took a backup. 926 lines of
++#: backup engine, a verification system and this status reporter existed, and
++#: the only way to actually make one was to type a script path from memory.
+ EXTRA_ITEMS: tuple[tuple[str, str, str, str], ...] = (
+     ("P", glyphs.RESET_PIN, "Reset PIN", "reset-pin"),
++    ("B", glyphs.BACKUP, "Back Up Now", "backup"),
++    ("R", glyphs.BACKUP, "Prove a Restore", "prove-restore"),
+ )
+ 
+ #: Every spelling the menu accepts for each item, so an operator who types the
+@@ -80,19 +86,27 @@ _ALIASES: dict[str, tuple[str, ...]] = {
+     "restart": ("restart",),
+     "reset-session": ("reset", "reset session", "reset-session"),
+     "reset-pin": ("reset pin", "reset-pin", "pin", "forgot pin", "forgotten pin"),
++    "backup": ("backup", "back up", "back up now", "backup now"),
++    "prove-restore": ("prove", "prove restore", "prove-restore", "restore proof"),
+     "stop": ("stop", "stop dispatch"),
+ }
+ 
+ #: Actions that change something. `status`, `settings` and `version` observe and
+ #: are therefore not here -- the one-shot command line runs them without the
+ #: launcher ever writing a file.
+-_ACTIONS = ("start", "stop", "restart", "open", "reset-session", "reset-pin")
++_ACTIONS = (
++    "start", "stop", "restart", "open", "reset-session", "reset-pin",
++    "backup", "prove-restore",
++)
+ 
+ #: Everything the command line accepts, including the read-only views.
+ #: `start-here` is what DISPATCH_START_HERE.cmd calls. It is not on the menu:
+ #: the menu is for somebody who already has Dispatch working, and this is the
+ #: path for somebody who does not yet.
+-_COMMANDS = ("menu", "status", "settings", "version", "start-here", *_ACTIONS)
++_COMMANDS = (
++    "menu", "status", "settings", "version", "start-here", "schedule-backup",
++    *_ACTIONS,
++)
+ 
+ 
+ def render_menu() -> str:
+@@ -167,6 +181,21 @@ def run_action(action: str) -> control.ControlResult:
+         from dispatch_launcher import first_run as _first_run
+ 
+         return _first_run.reset_pin()
++    if action in ("backup", "prove-restore"):
++        from dispatch_launcher import backup_actions
++
++        outcome = (
++            backup_actions.create() if action == "backup" else backup_actions.prove_restore()
++        )
++        # ControlResult is what the menu renders; the backup actions carry the
++        # same two facts under their own names rather than importing a control
++        # vocabulary they have nothing to do with.
++        return control.ControlResult(
++            action=action,
++            ok=outcome.ok,
++            message=outcome.summary,
++            details=outcome.detail.splitlines() if outcome.detail else [],
++        )
+     raise ValueError(f"unknown action: {action}")
+ 
+ 
+@@ -248,6 +277,12 @@ def main(argv: list[str] | None = None) -> int:
+         _print_version()
+         return 0
+ 
++    if args.action == "schedule-backup":
++        from dispatch_launcher import backup_actions
++
++        print(backup_actions.render_schedule())
++        return 0
++
+     if args.action == "start-here":
+         from dispatch_launcher import first_run as _first_run
+ 
+diff --git a/dispatch_launcher/glyphs.py b/dispatch_launcher/glyphs.py
+index fb8f9b0..f916164 100644
+--- a/dispatch_launcher/glyphs.py
++++ b/dispatch_launcher/glyphs.py
+@@ -44,12 +44,13 @@ RESTART = "↻"        # ↻
+ RESET = "⎌"          # ⎌
+ STOP = "■"           # ■
+ RESET_PIN = "\U0001f511"  # 🔑
++BACKUP = "\U0001f4be"    # 💾
+ 
+ #: Every glyph the menu uses. If the stream cannot encode all of them it gets
+ #: none of them -- a menu where three rows have icons and five do not looks
+ #: broken, and "looks broken" is indistinguishable from "is broken" to someone
+ #: deciding whether to trust the thing with their business.
+-ALL = (START, OPEN, REFRESH, SETTINGS, VERSION, RESTART, RESET, STOP, RESET_PIN)
++ALL = (START, OPEN, REFRESH, SETTINGS, VERSION, RESTART, RESET, STOP, RESET_PIN, BACKUP)
+ 
+ 
+ def stream_supports(stream=None) -> bool:
+diff --git a/portal/routes/__init__.py b/portal/routes/__init__.py
+index 7e1d8e3..7847ef8 100644
+--- a/portal/routes/__init__.py
++++ b/portal/routes/__init__.py
+@@ -10,6 +10,7 @@ from portal.routes.pipeline import pipeline_bp
+ from portal.routes.dispatch_api import dispatch_bp
+ from portal.routes.stakeholder import stakeholder_bp
+ from portal.routes.driver_portal import driver_portal_bp
++from portal.routes.maintenance import maintenance_bp
+ 
+ 
+ def register_routes(app: Flask) -> None:
+@@ -21,3 +22,4 @@ def register_routes(app: Flask) -> None:
+     app.register_blueprint(dispatch_bp, url_prefix="/api/dispatch")
+     app.register_blueprint(stakeholder_bp, url_prefix="/portal")
+     app.register_blueprint(driver_portal_bp, url_prefix="/driver")
++    app.register_blueprint(maintenance_bp)
+diff --git a/portal/routes/maintenance.py b/portal/routes/maintenance.py
+new file mode 100644
+index 0000000..3bfb7a9
+--- /dev/null
++++ b/portal/routes/maintenance.py
+@@ -0,0 +1,90 @@
++"""Backups, where the operator actually looks.
++
++`dispatch/backup.py` could capture the estate, verify it and restore it, and
++`dispatch_launcher/backups.py` could report on the result. Nothing anywhere
++could *take* one from a screen. The whole estate -- SQLite, twelve JSON stores
++and every uploaded evidence file -- sat on one laptop behind Mike remembering a
++script path.
++
++This page is deliberately thin: it reads the same status the launcher reads, and
++the two buttons call the same engine the launcher calls, so there is one
++implementation of "take a backup" and one answer to "is there one".
++
++Running a backup inside a request is defensible only because of what this
++program is: a single-operator application on that operator's own machine,
++serving one person who just pressed the button and is watching. It is not a
++multi-tenant service, and there is no queue to put the work on that would not be
++a second thing to keep running. The work is bounded by the size of the estate,
++and the operation is idempotent -- a second click writes a second archive, it
++does not corrupt the first.
++"""
++
++from __future__ import annotations
++
++from flask import Blueprint, flash, redirect, render_template, request, url_for
++
++maintenance_bp = Blueprint("maintenance", __name__)
++
++
++def _status():
++    from dispatch_launcher import backup_actions, backups
++
++    directory = backup_actions.resolve_backup_dir()
++    return backups.backup_status(directory), directory
++
++
++@maintenance_bp.route("/maintenance")
++def maintenance():
++    from dispatch.db import get_connection
++    from dispatch.money_schema import money_column_report, verify_money_integrity
++
++    status, directory = _status()
++    with get_connection() as conn:
++        money_report = money_column_report(conn)
++        money_integrity = verify_money_integrity(conn)
++
++    return render_template(
++        "maintenance.html",
++        backup=status,
++        backup_dir=str(directory) if directory else None,
++        money_report=money_report,
++        money_integrity=money_integrity,
++    )
++
++
++@maintenance_bp.route("/maintenance/backup", methods=["POST"])
++def run_backup():
++    from dispatch_launcher import backup_actions
++
++    result = backup_actions.create(compress=bool(request.form.get("compress")))
++    flash(
++        ("Backup taken. " if result.ok else "Backup failed. ") + result.summary,
++        "success" if result.ok else "error",
++    )
++    return redirect(url_for("maintenance.maintenance"))
++
++
++@maintenance_bp.route("/maintenance/prove-restore", methods=["POST"])
++def run_prove_restore():
++    """Restore the newest backup into a scratch directory and record the result.
++
++    Never the live paths: `dispatch.readiness.check_restore_destination` refuses a
++    destination that overlaps the live database or the live evidence store, and
++    it runs before anything is written.
++
++    `confirmed_by` is only ever what a person typed. A blank one records
++    Code-automated and the status stays UNVERIFIED, because the program can prove
++    the archive restores and that every hash matches -- it cannot prove the
++    restored Dispatch works, and manufacturing that claim is the thing the whole
++    verification record exists to prevent.
++    """
++    from dispatch_launcher import backup_actions
++
++    confirmed_by = (request.form.get("confirmed_by") or "").strip() or None
++    result = backup_actions.prove_restore(confirmed_by=confirmed_by)
++    flash(
++        (result.summary + " " + result.detail.replace("\n", " ")) if result.ok else
++        ("Restore proof failed. " + result.summary + " " + result.detail),
++        "success" if result.ok else "error",
++    )
++    return redirect(url_for("maintenance.maintenance"))
+diff --git a/portal/static/style.css b/portal/static/style.css
+index 6594155..4473bde 100644
+--- a/portal/static/style.css
++++ b/portal/static/style.css
+@@ -761,3 +761,21 @@ body {
+ .sample-data-banner .btn {
+     margin-left: 10px;
+ }
++
++/* Flashed messages — Maintenance actions report their outcome after the fact. */
++.flashes { list-style: none; margin: 0 0 16px; padding: 0; }
++.flash { padding: 10px 14px; border-radius: 4px; margin-bottom: 8px; font-size: 14px; }
++.flash-success { background: #eafaf1; color: #1e8449; border: 1px solid #a9dfbf; }
++.flash-error { background: #fdedec; color: #a93226; border: 1px solid #f5b7b1; }
++
++/* Truth vocabulary. The eight words are rendered as themselves everywhere; the
++   colour is the only thing that changes, never the word. */
++.truth { display:inline-block; padding:1px 8px; border-radius:3px; font-size:12px; font-weight:700; letter-spacing:.4px; }
++.truth-live { background:#eafaf1; color:#1e8449; }
++.truth-configured { background:#e8f4fd; color:#2471a3; }
++.truth-unconfigured { background:#f2f3f4; color:#707b7c; }
++.truth-simulated { background:#fef9e7; color:#b7950b; }
++.truth-unavailable { background:#fdedec; color:#a93226; }
++.truth-manual { background:#f4ecf7; color:#7d3c98; }
++.truth-absent { background:#f2f3f4; color:#566573; }
++.truth-unverified { background:#fdf2e9; color:#ca6f1e; }
+diff --git a/portal/templates/base.html b/portal/templates/base.html
+index 09e1784..a0562e3 100644
+--- a/portal/templates/base.html
++++ b/portal/templates/base.html
+@@ -66,6 +66,7 @@
+             <li><a href="{{ url_for('pages.conflicts') }}" class="{% if request.endpoint == 'pages.conflicts' %}active{% endif %}">Conflict Notices</a></li>
+             <li><a href="{{ url_for('pages.driver_pay') }}" class="{% if request.endpoint == 'pages.driver_pay' %}active{% endif %}">Driver Pay</a></li>
+             <li><a href="{{ url_for('pages.email_templates') }}" class="{% if request.endpoint == 'pages.email_templates' %}active{% endif %}">Email Templates</a></li>
++            <li><a href="{{ url_for('maintenance.maintenance') }}" class="{% if request.endpoint == 'maintenance.maintenance' %}active{% endif %}">Maintenance</a></li>
+             <li><a href="{{ url_for('pages.settings') }}" class="{% if request.endpoint == 'pages.settings' %}active{% endif %}">Settings</a></li>
+         </ul>
+     </nav>
+@@ -76,6 +77,18 @@
+             {% block page_actions %}{% endblock %}
+         </header>
+         <div class="page-body">
++            {# Flashed messages. Added with the Maintenance page, which is the
++               first screen whose actions take long enough that "it worked" has
++               to be said afterwards rather than shown by the page reloading. #}
++            {% with messages = get_flashed_messages(with_categories=true) %}
++              {% if messages %}
++                <ul class="flashes">
++                {% for category, message in messages %}
++                  <li class="flash flash-{{ category }}">{{ message }}</li>
++                {% endfor %}
++                </ul>
++              {% endif %}
++            {% endwith %}
+             {% block body %}{% endblock %}
+         </div>
+     </main>
+diff --git a/portal/templates/maintenance.html b/portal/templates/maintenance.html
+new file mode 100644
+index 0000000..df709b4
+--- /dev/null
++++ b/portal/templates/maintenance.html
+@@ -0,0 +1,81 @@
++{% extends "base.html" %}
++{% block title %}Maintenance — Dispatch{% endblock %}
++{% block page_title %}Maintenance{% endblock %}
++
++{% block body %}
++<div class="card-section">
++    <h2>Backups</h2>
++
++    {# The truth vocabulary, rendered as-is. No screen restates a backup's state
++       in friendlier words: UNVERIFIED means nobody has restored it, and softening
++       that to "ready" is exactly how an unrestored backup becomes a assumption. #}
++    <p>
++        <strong>Status:</strong>
++        <span class="truth truth-{{ backup.state|lower }}">{{ backup.state }}</span>
++    </p>
++    <p>{{ backup.detail }}</p>
++
++    <table class="data-table">
++        <tr><td class="label">Backup location</td>
++            <td>{{ backup_dir or 'Not configured — set DISPATCH_BACKUP_DIR' }}</td></tr>
++        {% if backup.location %}
++        <tr><td class="label">Newest archive</td><td>{{ backup.location }}</td></tr>
++        {% endif %}
++        {% if backup.created_at %}
++        <tr><td class="label">Taken</td>
++            <td>{{ backup.created_at }}
++                {% if backup.created_at_source %}<em>(from the {{ backup.created_at_source }})</em>{% endif %}
++            </td></tr>
++        {% endif %}
++    </table>
++
++    <form method="post" action="{{ url_for('maintenance.run_backup') }}" style="display:inline-block;margin-right:12px;">
++        <label style="font-weight:normal;">
++            <input type="checkbox" name="compress" value="1"> compress
++        </label>
++        <button class="btn btn-success" type="submit">Back Up Now</button>
++    </form>
++
++    <form method="post" action="{{ url_for('maintenance.run_prove_restore') }}" style="display:inline-block;">
++        <input type="text" name="confirmed_by" placeholder="your name (only after you have checked it)"
++               style="width:280px;padding:4px 8px;">
++        <button class="btn" type="submit">Prove a Restore</button>
++    </form>
++
++    <p class="muted" style="margin-top:10px;">
++        Leave the name blank and the restore is recorded as <code>Code-automated</code>:
++        the archive restored into an isolated scratch directory and every hash matched.
++        The status stays UNVERIFIED until a person opens a restored copy and confirms
++        it works, and types their name here. Dispatch does not make that claim on
++        anyone's behalf.
++    </p>
++
++    <p class="muted">
++        To run one every night:
++        <code>python -m dispatch_launcher schedule-backup</code> prints the exact command.
++    </p>
++</div>
++
++<div class="card-section">
++    <h2>Stored money</h2>
++    <p>
++        Every monetary column carries an exact whole-cent companion, so totals are
++        added up in cents rather than in floating point.
++        <strong>{{ money_report.covered }} of {{ money_report.total }}</strong> columns covered.
++    </p>
++    {% if not money_integrity.ok %}
++    <p><strong>{{ money_integrity.findings|length }}</strong> stored amounts are not a whole
++       number of cents. These are reported, never corrected automatically — which way
++       a fractional cent should go is a decision about somebody's invoice.</p>
++    <table class="data-table">
++        <tr><th>Table</th><th>Column</th><th>Row</th><th>Stored</th><th>Rounds to</th></tr>
++        {% for f in money_integrity.findings[:25] %}
++        <tr><td>{{ f.table }}</td><td>{{ f.column }}</td><td>{{ f.rowid }}</td>
++            <td>{{ f.stored }}</td><td>{{ f.rounds_to_cents }}</td></tr>
++        {% endfor %}
++    </table>
++    {% else %}
++    <p>Every stored amount is a whole number of cents.</p>
++    {% endif %}
++</div>
++{% endblock %}
+diff --git a/scripts/dispatch_backup.py b/scripts/dispatch_backup.py
+index 2966638..92f8e02 100755
+--- a/scripts/dispatch_backup.py
++++ b/scripts/dispatch_backup.py
+@@ -86,6 +86,29 @@ def _cmd_restore(args: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def _cmd_prove(args: argparse.Namespace) -> int:
++    """Restore into an isolated destination and record what was actually proven.
++
++    Step 20 of the operational proof path in command form. The destination is
++    checked before anything is written: it must be empty and must overlap
++    neither the live database nor the live evidence store.
++
++    Without --confirmed-by the record says Code-automated, and the launcher
++    keeps reporting UNVERIFIED. That is not a limitation to work around -- the
++    program can prove the archive restores and that every hash matches, and it
++    cannot prove the restored Dispatch works, because that is a person opening
++    it and looking at it.
++    """
++    from dispatch_launcher import backup_actions
++
++    result = backup_actions.prove_restore(
++        args.archive, args.destination,
++        confirmed_by=args.confirmed_by, keep=args.keep,
++    )
++    print(result.render())
++    return 0 if result.ok else 1
++
++
+ def build_parser() -> argparse.ArgumentParser:
+     parser = argparse.ArgumentParser(prog="dispatch_backup", description=__doc__.splitlines()[0])
+     sub = parser.add_subparsers(dest="command", required=True)
+@@ -107,6 +130,21 @@ def build_parser() -> argparse.ArgumentParser:
+     p_restore.add_argument("--force", action="store_true", help="allow a non-empty destination")
+     p_restore.add_argument("--dry-run", action="store_true", help="report what would be written, write nothing")
+     p_restore.set_defaults(func=_cmd_restore)
++
++    p_prove = sub.add_parser(
++        "prove", help="restore into an isolated destination and record the result"
++    )
++    p_prove.add_argument("archive", type=Path, nargs="?", default=None,
++                         help="the archive to prove; defaults to the newest in DISPATCH_BACKUP_DIR")
++    p_prove.add_argument("destination", type=Path, nargs="?", default=None,
++                         help="an empty scratch directory; a temporary one is used if omitted")
++    p_prove.add_argument("--confirmed-by", default=None,
++                         help="your name, ONLY after you have opened the restored Dispatch "
++                              "and confirmed it works. Without it the record says Code-automated.")
++    p_prove.add_argument("--keep", action="store_true",
++                         help="keep the restored copy instead of deleting the scratch directory")
++    p_prove.set_defaults(func=_cmd_prove)
++
+     return parser
+ 
+ 
+diff --git a/tests/test_backup_activation.py b/tests/test_backup_activation.py
+new file mode 100644
+index 0000000..28cea22
+--- /dev/null
++++ b/tests/test_backup_activation.py
+@@ -0,0 +1,233 @@
++"""A backup you can actually take, and a restore you can actually prove.
++
++`dispatch/backup.py` was 926 lines of capture, manifest, SHA-256 verification,
++safe restore and stored-path repointing. `dispatch_launcher/backups.py` reported
++on the result. Nothing in the product took one: no portal route, no template, no
++launcher command, no scheduled task. The only in-product caller of
++`create_backup` was `dispatch/proof.py`, whose own commands did not run
++(tests/test_proof_command_contract.py). So the whole estate sat on one laptop
++behind Mike remembering a script path that appeared in no menu.
++
++The honesty rule is kept intact and is tested here as a rule, not an accident:
++the program can prove an archive restores into an isolated destination and that
++every hash matches. It cannot prove the restored Dispatch *works*, so a
++machine-performed restore leaves the status at UNVERIFIED and says exactly what
++it did.
++"""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++import pytest
++
++from dispatch import services
++from dispatch.db import set_db_path
++from dispatch_launcher import backup_actions, backups, cli
++
++
++@pytest.fixture
++def estate(tmp_path, monkeypatch):
++    """A live estate with a load and an evidence file, plus a backup location."""
++    data = tmp_path / "Operations"
++    # A real install has all of these; create_backup correctly reports a missing
++    # source as an incomplete backup rather than quietly capturing less.
++    for sub in ("PortalData", "Evidence", "Memory", "ArchiveRecords"):
++        (data / sub).mkdir(parents=True, exist_ok=True)
++    (tmp_path / "Archive").mkdir(parents=True, exist_ok=True)
++    monkeypatch.setenv("PORTAL_DATA_DIR", str(data / "PortalData"))
++    monkeypatch.setenv("PORTAL_UPLOAD_DIR", str(data / "Evidence"))
++    monkeypatch.setenv("DISPATCH_MEMORY_ROOT", str(data / "Memory"))
++    monkeypatch.setenv("DISPATCH_ARCHIVE_ROOT", str(tmp_path / "Archive"))
++    monkeypatch.setenv("DISPATCH_BACKUP_DIR", str(tmp_path / "Backups"))
++    set_db_path(data / "dispatch.db")
++    try:
++        load = services.create_load(customer="Acme Foods")
++        services.attach_evidence(
++            load["load_id"], description="BOL", uploaded_by="Mike",
++            file_data=b"%PDF-1.4 bill of lading", original_filename="bol.pdf",
++        )
++        yield {"load_id": load["load_id"], "backups": tmp_path / "Backups", "root": tmp_path}
++    finally:
++        set_db_path(None)
++
++
++class TestTakingOne:
++    def test_the_launcher_can_take_a_backup(self, estate):
++        result = backup_actions.create()
++        assert result.ok, result.detail
++        assert Path(result.archive).exists()
++        assert backups._archive_candidates(estate["backups"])  # noqa: SLF001
++
++    def test_it_refuses_rather_than_guessing_a_location(self, estate, monkeypatch):
++        monkeypatch.delenv("DISPATCH_BACKUP_DIR")
++        result = backup_actions.create()
++        assert result.ok is False
++        assert "not choose a folder" in result.detail
++        # Inventing D:\Backups and reporting "no backups found" would tell Mike
++        # his backups are missing when nothing was ever looking in the right place.
++        assert "D:" not in result.detail
++
++    def test_the_status_says_unverified_immediately_after(self, estate):
++        backup_actions.create()
++        status = backups.backup_status(estate["backups"])
++        assert status.state == backups.UNVERIFIED
++        assert "never been restored" in status.detail
++
++    def test_the_result_tells_the_operator_what_to_do_next(self, estate):
++        result = backup_actions.create()
++        assert "prove-restore" in result.detail
++
++
++class TestProvingOne:
++    def test_a_restore_into_a_scratch_destination_succeeds(self, estate):
++        backup_actions.create()
++        result = backup_actions.prove_restore()
++        assert result.ok, result.detail
++        assert result.evidence["files_restored"] > 0
++        assert result.evidence["database_restored"] is True
++
++    def test_the_record_says_code_automated_and_the_status_stays_unverified(self, estate):
++        backup_actions.create()
++        backup_actions.prove_restore()
++
++        status = backups.backup_status(estate["backups"])
++        assert status.state == backups.UNVERIFIED, (
++            "a machine proved the archive restores; it cannot prove the restored "
++            "Dispatch works, and VERIFIED would be that claim"
++        )
++        assert status.verification["performed_by"] == "Code-automated"
++        assert "every hash matched" in status.detail
++
++    def test_a_person_confirming_reaches_verified(self, estate):
++        backup_actions.create()
++        backup_actions.prove_restore(confirmed_by="Mike")
++
++        status = backups.backup_status(estate["backups"])
++        assert status.state == backups.VERIFIED
++        assert status.verification["performed_by"] == "Mike"
++
++    def test_the_record_names_the_archive_it_is_about(self, estate):
++        backup_actions.create()
++        result = backup_actions.prove_restore()
++        written = list(estate["backups"].glob(f"*{backups.VERIFICATION_NAME}"))
++        assert len(written) == 1
++        record = json.loads(written[0].read_text(encoding="utf-8"))
++        assert record["archive"] in result.archive
++
++    def test_a_record_is_not_borrowed_for_a_later_backup(self, estate):
++        from dispatch import backup as engine
++
++        engine.create_backup(estate["backups"], name="dispatch-backup-20260101T000000Z")
++        backup_actions.prove_restore(confirmed_by="Mike")
++        # A second, unproven archive, named later so it is unambiguously newest.
++        engine.create_backup(estate["backups"], name="dispatch-backup-20260601T000000Z")
++        status = backups.backup_status(estate["backups"])
++        assert status.state == backups.UNVERIFIED
++
++    def test_it_refuses_a_destination_that_overlaps_the_live_estate(self, estate, tmp_path):
++        """Restoring over the live database is prohibited outright, and the gate
++        runs before anything is written rather than being remembered during it."""
++        backup_actions.create()
++        live = Path(estate["root"]) / "Operations"
++        result = backup_actions.prove_restore(destination=live)
++        assert result.ok is False
++        assert "refused" in result.summary.lower()
++
++    def test_it_reports_rather_than_raising_when_there_is_nothing_to_prove(self, estate):
++        result = backup_actions.prove_restore()
++        assert result.ok is False
++        assert "Take one first" in result.detail
++
++    def test_the_scratch_copy_is_cleaned_up_unless_asked_for(self, estate, tmp_path):
++        backup_actions.create()
++        keep_dir = tmp_path / "kept"
++        backup_actions.prove_restore(destination=keep_dir, keep=True)
++        assert any(keep_dir.iterdir())
++
++
++class TestTheLauncherSurface:
++    def test_backup_and_prove_are_menu_controls(self):
++        actions = {action for _k, _g, _l, action in cli.EXTRA_ITEMS}
++        assert {"backup", "prove-restore"} <= actions
++
++    @pytest.mark.parametrize(
++        "typed", ["B", "b", "backup", "back up now", "R", "prove", "restore proof"]
++    )
++    def test_an_operator_can_type_it(self, typed):
++        assert cli.resolve_choice(typed) in {"backup", "prove-restore"}
++
++    def test_they_are_command_line_commands_too(self):
++        assert "backup" in cli._COMMANDS  # noqa: SLF001
++        assert "prove-restore" in cli._COMMANDS  # noqa: SLF001
++        assert "schedule-backup" in cli._COMMANDS  # noqa: SLF001
++
++    def test_run_action_returns_something_the_menu_can_render(self, estate):
++        result = cli.run_action("backup")
++        assert result.ok is True
++        assert result.action == "backup"
++        assert isinstance(result.details, list)
++
++
++class TestScheduling:
++    def test_it_prints_a_command_for_both_platforms(self, estate):
++        plan = backup_actions.schedule_command()
++        assert "schtasks /Create" in plan["windows"]
++        assert plan["cron"].startswith("0 2 * * *")
++        assert plan["backup_dir"] == str(estate["backups"])
++
++    def test_it_does_not_register_the_task_itself(self, estate, monkeypatch):
++        """Writing to the machine's task scheduler is not something a report does."""
++        import subprocess
++
++        called = []
++        monkeypatch.setattr(subprocess, "run", lambda *a, **k: called.append(a))
++        backup_actions.schedule_command()
++        backup_actions.render_schedule()
++        assert called == []
++
++    def test_it_says_so_when_no_location_is_configured(self, estate, monkeypatch):
++        monkeypatch.delenv("DISPATCH_BACKUP_DIR")
++        rendered = backup_actions.render_schedule()
++        assert "DISPATCH_BACKUP_DIR is not set" in rendered
++
++
++class TestThePortalPage:
++    @pytest.fixture
++    def client(self, estate, monkeypatch):
++        from portal.app import create_app
++
++        app = create_app({"TESTING": True})
++        app.config["LOGIN_DISABLED"] = True
++        return app.test_client()
++
++    def test_the_page_renders_the_state_in_the_truth_vocabulary(self, client, estate):
++        backup_actions.create()
++        body = client.get("/maintenance").get_data(as_text=True)
++        assert "UNVERIFIED" in body
++        assert str(estate["backups"]) in body
++
++    def test_the_button_takes_a_backup(self, client, estate):
++        assert not backups._archive_candidates(estate["backups"])  # noqa: SLF001
++        response = client.post("/maintenance/backup", follow_redirects=True)
++        assert response.status_code == 200
++        assert backups._archive_candidates(estate["backups"])  # noqa: SLF001
++
++    def test_the_prove_button_records_code_automated_when_no_name_is_given(self, client, estate):
++        client.post("/maintenance/backup")
++        client.post("/maintenance/prove-restore", data={"confirmed_by": ""}, follow_redirects=True)
++        assert backups.backup_status(estate["backups"]).verification["performed_by"] == "Code-automated"
++
++    def test_a_typed_name_is_what_is_recorded(self, client, estate):
++        client.post("/maintenance/backup")
++        client.post(
++            "/maintenance/prove-restore", data={"confirmed_by": "Mike"}, follow_redirects=True
++        )
++        status = backups.backup_status(estate["backups"])
++        assert status.verification["performed_by"] == "Mike"
++        assert status.state == backups.VERIFIED
++
++    def test_the_page_is_linked_from_every_screen(self, client):
++        body = client.get("/home").get_data(as_text=True)
++        assert "/maintenance" in body
+diff --git a/tests/test_control_center.py b/tests/test_control_center.py
+index 0be5400..9d0318c 100644
+--- a/tests/test_control_center.py
++++ b/tests/test_control_center.py
+@@ -590,12 +590,25 @@ class TestLetteredControls:
+         assert not keys & {key for key, _g, _l, _a in cli.MENU_ITEMS}
+         assert "Q" not in keys, "Q is Quit and must not be reused"
+ 
+-    def test_the_menu_shows_it_between_the_eight_and_quit(self):
+-        rendered = cli.render_menu().splitlines()
+-        rows = [line for line in rendered if line.strip()]
+-        assert "Stop Dispatch" in rows[7]
+-        assert "Reset PIN" in rows[8]
+-        assert "Quit" in rows[9]
++    def test_the_menu_shows_the_lettered_controls_between_the_eight_and_quit(self):
++        """Position by structure, not by row number.
++
++        This asserted rows[8] and rows[9] literally, so adding a second lettered
++        control failed it -- while the rule it exists to protect ("the eight are
++        settled; lettered controls go after them and before Quit") was never
++        broken. The eight numbered rows are still pinned by index, because that
++        ordering IS the specification.
++        """
++        rows = [line for line in cli.render_menu().splitlines() if line.strip()]
++        assert "Stop Dispatch" in rows[7], "the eighth numbered control must stay eighth"
++
++        lettered = [label for _k, _g, label, _a in cli.EXTRA_ITEMS]
++        positions = [next(i for i, r in enumerate(rows) if label in r) for label in lettered]
++        quit_row = next(i for i, r in enumerate(rows) if "Quit" in r)
++
++        assert min(positions) == 8, "a lettered control must follow the eighth numbered one"
++        assert max(positions) < quit_row, "Quit stays last"
++        assert quit_row == len(rows) - 1
+ 
+     @pytest.mark.parametrize(
+         "typed", ["P", "p", " p ", "reset pin", "reset-pin", "forgot pin", "forgotten pin"]
+diff --git a/tests/test_proof_command_contract.py b/tests/test_proof_command_contract.py
+index a5bc1d4..2b45c1b 100644
+--- a/tests/test_proof_command_contract.py
++++ b/tests/test_proof_command_contract.py
+@@ -138,8 +138,11 @@ def test_backup_cli_has_no_create_subcommand_to_drift_back_to():
+     """Pins the two names that were wrong, so a revert is a test failure."""
+     parser = _load_script("dispatch_backup").build_parser()
+     subs = _subcommand_names(parser)
+-    assert subs == {"backup", "verify", "restore"}
+-    assert "create" not in subs
++    assert {"backup", "verify", "restore"} <= subs
++    assert "create" not in subs, (
++        "`create` is the name proof step 19 used for four months while the parser "
++        "only ever had `backup`. It must not come back."
++    )
+ 
+ 
+ def test_proof_cli_exposes_the_step_18_subcommand():
+-- 
+2.43.0
+

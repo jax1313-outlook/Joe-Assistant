@@ -1,0 +1,1415 @@
+From 0764bc49f03a658389842e21924ca4e30a66f16a Mon Sep 17 00:00:00 2001
+From: Dispatch Sandbox <jax1313@outlook.com>
+Date: Sat, 12 Sep 2026 20:04:26 +0000
+Subject: [PATCH 09/12] Record every outbound attempt, log it, and give the log
+ a size
+
+_notify_safe() caught every exception from every notification send -- twelve call
+sites -- and wrote one line to stderr. The reasoning was right and it stopped
+half way: the load *was* invoiced, and an SMTP failure should not turn a
+committed write into a 500, but there was no database row, no screen indicator,
+no counter and no retry. A broker notification that failed authentication left
+Mike looking at a successful Submit and a broker who never heard from him. The
+truth vocabulary already had the word for that state; nothing was in a position
+to display it because nothing recorded it.
+
+dispatch/delivery.py writes the row BEFORE the send, the only ordering that
+survives the failures that matter -- a process killed mid-send, or a transport
+that hangs, both leave a QUEUED row the next sweep can see. Backoff is
+1/5/15/60/240 minutes then ABANDONED: retrying an auth failure every minute
+forever is how an account gets locked, and a queue that never gives up is a queue
+nobody reads. A .eml in Archive/Outbox is recorded as SIMULATED, never SENT --
+"a file exists" and "a mail server accepted it" are different facts and only one
+means the broker heard from Mike.
+
+Nothing resends on a timer. notifications_retry.run_due() is called by the
+launcher, a scheduled task or the Maintenance button, so a resend is always
+something the operator can point at. It rebuilds each message from the load
+rather than from a stored body: a broker receiving, hours later, a description of
+a state the load has since left is worse than a message that never arrived.
+
+dispatch/observability.py replaces 80 print() calls and 0 uses of logging with
+one key=value line per event, on stderr (so the launcher's server.log capture
+keeps working) and in a RotatingFileHandler at 5 MB x 5. The maintenance guide
+already said "nothing rotates them automatically"; a log that fills the disk the
+database is on takes Dispatch down to record that something went wrong.
+
+Surfaced on /home (the count) and /maintenance (the rows, with the reason).
+
+Also fixes a real race the suite found under load and never in isolation:
+/proc/<pid>/cmdline is empty between fork and exec, so control.start() could
+record a null command line for the process it will later have to identify before
+stop() signals it. Bounded retry, alive-only.
+---
+ dispatch/db.py                    |   6 +-
+ dispatch/delivery.py              | 327 ++++++++++++++++++++++++++++++
+ dispatch/notifications_retry.py   | 112 ++++++++++
+ dispatch/observability.py         | 145 +++++++++++++
+ dispatch/services.py              | 101 ++++++---
+ dispatch_launcher/cli.py          |  11 +
+ dispatch_launcher/processes.py    |  33 ++-
+ portal/routes/maintenance.py      |  22 ++
+ portal/routes/pages.py            |   6 +
+ portal/templates/home.html        |  15 ++
+ portal/templates/maintenance.html |  55 +++++
+ tests/test_delivery_visibility.py | 274 +++++++++++++++++++++++++
+ 12 files changed, 1071 insertions(+), 36 deletions(-)
+ create mode 100644 dispatch/delivery.py
+ create mode 100644 dispatch/notifications_retry.py
+ create mode 100644 dispatch/observability.py
+ create mode 100644 tests/test_delivery_visibility.py
+
+diff --git a/dispatch/db.py b/dispatch/db.py
+index e642447..b8d4d40 100644
+--- a/dispatch/db.py
++++ b/dispatch/db.py
+@@ -457,6 +457,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
+     # `dispatch.security` schema here; that stack is superseded by the Portal
+     # PIN gate already on main (CF-03) and was deliberately not recovered.
+     from dispatch.authcounters import init_auth_counter_schema
++    from dispatch.delivery import init_delivery_schema
+     from dispatch.connectors.audit import init_connector_schema
+     from dispatch.spine.db import init_spine_schema
+     from dispatch.tokens import init_token_schema
+@@ -468,6 +469,9 @@ def _init_db(conn: sqlite3.Connection) -> None:
+     # hash in its JSON store because a lost update on a lockout counter is not a
+     # cosmetic race -- see dispatch/authcounters.py.
+     init_auth_counter_schema(conn)
++    # Every outbound message attempt, recorded before it is tried. A failed
++    # broker notification used to produce one line on stderr and nothing else.
++    init_delivery_schema(conn)
+ 
+ 
+ def _apply_migrations(conn: sqlite3.Connection) -> None:
+@@ -528,7 +532,7 @@ BUSY_TIMEOUT_MS = int(os.environ.get("DISPATCH_SQLITE_BUSY_TIMEOUT_MS", "5000"))
+ #: `schema_state` after a successful initialisation so a later connection can
+ #: tell "already built, and built by this version of the code" from "built by
+ #: an older one" with a single cheap read.
+-SCHEMA_REVISION = 3
++SCHEMA_REVISION = 4
+ 
+ #: Database paths this *process* has already initialised. The expensive part of
+ #: `_init_db` is not the work, it is that it ran on every one of the ~160
+diff --git a/dispatch/delivery.py b/dispatch/delivery.py
+new file mode 100644
+index 0000000..bbc3d04
+--- /dev/null
++++ b/dispatch/delivery.py
+@@ -0,0 +1,327 @@
++"""Every outbound message attempt, recorded — so a failure is visible.
++
++`services._notify_safe()` catches every exception from every notification send
++and writes one line to stderr. Twelve call sites. The reasoning is sound as far
++as it goes: the load *was* invoiced, and an SMTP timeout should not turn a
++committed write into a 500. But the second half was never built. A broker
++notification that fails authentication produced:
++
++    no database record   no screen indicator   no counter   no retry
++    one line in an unbounded text file
++
++Mike sees Submit succeed. The broker never hears from him. Nothing anywhere
++says so, and the truth vocabulary has a word for exactly this state --
++UNAVAILABLE -- which no surface was in a position to display because nothing
++recorded it.
++
++So every attempt gets a row. The row is written *before* the send, which is the
++only ordering that survives the failure modes that matter: a process killed
++mid-send, or a transport that hangs, both leave a QUEUED row that the next
++sweep can see. A row written afterwards would record only the sends that
++already worked.
++
++**Retry is bounded and it backs off.** 1, 5, 15, 60, 240 minutes, then
++ABANDONED. Retrying an authentication failure every minute forever is how an
++account gets locked, and a queue that never gives up is a queue nobody reads.
++
++**Nothing is retried automatically behind the operator's back.** `retry_due()`
++returns what is owed; the launcher, a scheduled task or the Maintenance page
++runs it. Dispatch does not open a background thread on a laptop to resend
++freight email.
++"""
++
++from __future__ import annotations
++
++import logging
++import uuid
++from dataclasses import dataclass, field
++from datetime import datetime, timedelta, timezone
++
++from dispatch.db import get_connection
++from dispatch.observability import event, get_logger
++
++log = get_logger("dispatch.delivery")
++
++#: The states an attempt can hold, drawn from the program's fixed vocabulary
++#: where one fits and named plainly where none does.
++QUEUED = "QUEUED"        #: written, not yet attempted
++SENT = "SENT"            #: a transport accepted it
++FAILED = "FAILED"        #: the last attempt failed; a retry is owed
++ABANDONED = "ABANDONED"  #: out of attempts; a person has to decide
++SIMULATED = "SIMULATED"  #: no relay configured; written to the local outbox
++
++OPEN_STATES = (QUEUED, FAILED)
++
++#: Minutes before each retry. Five attempts, then a person decides.
++BACKOFF_MINUTES = (1, 5, 15, 60, 240)
++MAX_ATTEMPTS = len(BACKOFF_MINUTES)
++
++_SCHEMA = """
++CREATE TABLE IF NOT EXISTS delivery_attempts (
++    attempt_id     TEXT PRIMARY KEY,
++    kind           TEXT NOT NULL,
++    subject_ref    TEXT NOT NULL DEFAULT '',
++    recipient      TEXT NOT NULL DEFAULT '',
++    summary        TEXT NOT NULL DEFAULT '',
++    transport      TEXT NOT NULL DEFAULT '',
++    status         TEXT NOT NULL DEFAULT 'QUEUED',
++    attempt_count  INTEGER NOT NULL DEFAULT 0,
++    last_error     TEXT NOT NULL DEFAULT '',
++    receipt        TEXT NOT NULL DEFAULT '',
++    next_retry_at  TEXT,
++    created_at     TEXT NOT NULL,
++    updated_at     TEXT NOT NULL
++);
++CREATE INDEX IF NOT EXISTS idx_delivery_status ON delivery_attempts(status);
++CREATE INDEX IF NOT EXISTS idx_delivery_subject ON delivery_attempts(subject_ref);
++"""
++
++
++def init_delivery_schema(conn) -> None:
++    conn.executescript(_SCHEMA)
++
++
++def _now() -> datetime:
++    return datetime.now(timezone.utc)
++
++
++def _iso(moment: datetime) -> str:
++    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
++
++
++def _parse(value: str | None) -> datetime | None:
++    if not value:
++        return None
++    text = value[:-1] + "+00:00" if value.endswith("Z") else value
++    try:
++        parsed = datetime.fromisoformat(text)
++    except ValueError:
++        return None
++    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
++
++
++@dataclass
++class Attempt:
++    attempt_id: str
++    kind: str
++    subject_ref: str = ""
++    recipient: str = ""
++    summary: str = ""
++    transport: str = ""
++    status: str = QUEUED
++    attempt_count: int = 0
++    last_error: str = ""
++    receipt: str = ""
++    next_retry_at: str | None = None
++    created_at: str = ""
++    updated_at: str = ""
++
++    @classmethod
++    def from_row(cls, row) -> "Attempt":
++        return cls(**{k: row[k] for k in row.keys() if k in cls.__annotations__})
++
++    def to_dict(self) -> dict:
++        return dict(self.__dict__)
++
++
++def queue(
++    kind: str,
++    *,
++    subject_ref: str = "",
++    recipient: str = "",
++    summary: str = "",
++    transport: str = "",
++    now: datetime | None = None,
++) -> str:
++    """Record the intent to send, before sending. Returns the attempt id.
++
++    Written first on purpose. A process killed mid-send, or a transport that
++    hangs past its timeout, both leave a QUEUED row that the next sweep can act
++    on. A row written after a successful send records only the sends that
++    already worked, which is the set nobody needs a record of.
++    """
++    moment = _iso(now or _now())
++    attempt_id = f"DLV-{uuid.uuid4().hex[:12].upper()}"
++    with get_connection() as conn:
++        conn.execute(
++            """INSERT INTO delivery_attempts
++                   (attempt_id, kind, subject_ref, recipient, summary, transport,
++                    status, attempt_count, created_at, updated_at)
++               VALUES (?,?,?,?,?,?,?,0,?,?)""",
++            (attempt_id, kind, subject_ref, recipient, summary, transport, QUEUED, moment, moment),
++        )
++    return attempt_id
++
++
++def mark_sent(attempt_id: str, *, receipt: str = "", transport: str = "", now: datetime | None = None) -> None:
++    moment = _iso(now or _now())
++    with get_connection() as conn:
++        conn.execute(
++            """UPDATE delivery_attempts
++                  SET status=?, attempt_count=attempt_count+1, receipt=?, last_error='',
++                      next_retry_at=NULL, updated_at=?,
++                      transport=CASE WHEN ?='' THEN transport ELSE ? END
++                WHERE attempt_id=?""",
++            (SENT, receipt, moment, transport, transport, attempt_id),
++        )
++    event(log, logging.INFO, "delivery sent", attempt=attempt_id, receipt=receipt or "-")
++
++
++def mark_simulated(attempt_id: str, *, receipt: str = "", now: datetime | None = None) -> None:
++    """No relay configured. The message went to the local outbox, not to anyone.
++
++    A distinct state rather than SENT, because "written to Archive/Outbox" and
++    "a mail server accepted it" are different facts and only one of them means
++    the broker heard from Mike.
++    """
++    moment = _iso(now or _now())
++    with get_connection() as conn:
++        conn.execute(
++            """UPDATE delivery_attempts
++                  SET status=?, attempt_count=attempt_count+1, receipt=?,
++                      next_retry_at=NULL, updated_at=?
++                WHERE attempt_id=?""",
++            (SIMULATED, receipt, moment, attempt_id),
++        )
++    event(log, logging.INFO, "delivery simulated", attempt=attempt_id, receipt=receipt or "-")
++
++
++def mark_failed(attempt_id: str, error: str, *, now: datetime | None = None) -> dict:
++    """Count the failure, schedule the next try, or give up and say so."""
++    moment = now or _now()
++    with get_connection() as conn:
++        row = conn.execute(
++            "SELECT * FROM delivery_attempts WHERE attempt_id=?", (attempt_id,)
++        ).fetchone()
++        if row is None:
++            return {}
++        count = row["attempt_count"] + 1
++        if count >= MAX_ATTEMPTS:
++            status, next_retry = ABANDONED, None
++        else:
++            status = FAILED
++            next_retry = _iso(moment + timedelta(minutes=BACKOFF_MINUTES[count - 1]))
++        conn.execute(
++            """UPDATE delivery_attempts
++                  SET status=?, attempt_count=?, last_error=?, next_retry_at=?, updated_at=?
++                WHERE attempt_id=?""",
++            (status, count, str(error)[:2000], next_retry, _iso(moment), attempt_id),
++        )
++    event(
++        log,
++        logging.ERROR if status == ABANDONED else logging.WARNING,
++        "delivery failed",
++        attempt=attempt_id, status=status, attempt_count=count,
++        next_retry=next_retry or "none", error=str(error)[:200],
++    )
++    return {"status": status, "attempt_count": count, "next_retry_at": next_retry}
++
++
++def get(attempt_id: str) -> dict | None:
++    with get_connection() as conn:
++        row = conn.execute(
++            "SELECT * FROM delivery_attempts WHERE attempt_id=?", (attempt_id,)
++        ).fetchone()
++    return Attempt.from_row(row).to_dict() if row else None
++
++
++def list_attempts(*, status: str | None = None, subject_ref: str | None = None, limit: int = 200) -> list[dict]:
++    sql = "SELECT * FROM delivery_attempts"
++    clauses, params = [], []
++    if status:
++        clauses.append("status=?")
++        params.append(status)
++    if subject_ref:
++        clauses.append("subject_ref=?")
++        params.append(subject_ref)
++    if clauses:
++        sql += " WHERE " + " AND ".join(clauses)
++    sql += " ORDER BY created_at DESC LIMIT ?"
++    params.append(limit)
++    with get_connection() as conn:
++        rows = conn.execute(sql, params).fetchall()
++    return [Attempt.from_row(r).to_dict() for r in rows]
++
++
++def open_failures(limit: int = 200) -> list[dict]:
++    """Everything a person should look at: failed-and-owed, and abandoned."""
++    placeholders = ",".join("?" * (len(OPEN_STATES) + 1))
++    with get_connection() as conn:
++        rows = conn.execute(
++            f"SELECT * FROM delivery_attempts WHERE status IN ({placeholders})"
++            " ORDER BY updated_at DESC LIMIT ?",
++            (*OPEN_STATES, ABANDONED, limit),
++        ).fetchall()
++    return [Attempt.from_row(r).to_dict() for r in rows]
++
++
++def retry_due(*, now: datetime | None = None, limit: int = 50) -> list[dict]:
++    """Attempts whose backoff has elapsed. Returned, not sent.
++
++    Dispatch does not open a background thread on a laptop to resend freight
++    email. The launcher, a scheduled task, or the Maintenance page decides when
++    this runs, so a resend is always something the operator can point at.
++    """
++    moment = _iso(now or _now())
++    with get_connection() as conn:
++        rows = conn.execute(
++            "SELECT * FROM delivery_attempts"
++            " WHERE status=? AND next_retry_at IS NOT NULL AND next_retry_at <= ?"
++            " ORDER BY next_retry_at ASC LIMIT ?",
++            (FAILED, moment, limit),
++        ).fetchall()
++    return [Attempt.from_row(r).to_dict() for r in rows]
++
++
++def summary(*, now: datetime | None = None) -> dict:
++    """The counts a dashboard shows. Cheap enough to put on every page."""
++    with get_connection() as conn:
++        rows = conn.execute(
++            "SELECT status, COUNT(*) AS n FROM delivery_attempts GROUP BY status"
++        ).fetchall()
++    counts = {r["status"]: r["n"] for r in rows}
++    return {
++        "counts": counts,
++        "needs_attention": counts.get(FAILED, 0) + counts.get(ABANDONED, 0) + counts.get(QUEUED, 0),
++        "abandoned": counts.get(ABANDONED, 0),
++        "retry_due": len(retry_due(now=now, limit=1000)),
++    }
++
++
++def send_with_record(
++    kind: str,
++    send,
++    *,
++    subject_ref: str = "",
++    recipient: str = "",
++    summary_text: str = "",
++    transport: str = "",
++    now: datetime | None = None,
++) -> dict:
++    """Queue, attempt, and record the outcome. Never raises.
++
++    Replaces the bare try/except-and-print at each notification call site. The
++    exception is still swallowed -- an SMTP failure must not fail a committed
++    write -- but it is swallowed *into a row somebody can see* rather than into
++    a log file on a laptop.
++
++    A receipt beginning "not sent" is the transport's own way of saying it wrote
++    a local .eml instead of delivering, so it is recorded as SIMULATED. Calling
++    that SENT would be the same lie one layer down.
++    """
++    attempt_id = queue(
++        kind, subject_ref=subject_ref, recipient=recipient,
++        summary=summary_text, transport=transport, now=now,
++    )
++    try:
++        receipt = send()
++    except Exception as exc:  # noqa: BLE001 - any transport failure, not just SMTP
++        outcome = mark_failed(attempt_id, f"{type(exc).__name__}: {exc}", now=now)
++        return {"attempt_id": attempt_id, "ok": False, **outcome}
++
++    text = "" if receipt is None else str(receipt)
++    if text.startswith("not sent"):
++        mark_simulated(attempt_id, receipt=text, now=now)
++        return {"attempt_id": attempt_id, "ok": True, "status": SIMULATED, "receipt": text}
++    mark_sent(attempt_id, receipt=text, transport=transport, now=now)
++    return {"attempt_id": attempt_id, "ok": True, "status": SENT, "receipt": text}
+diff --git a/dispatch/notifications_retry.py b/dispatch/notifications_retry.py
+new file mode 100644
+index 0000000..39b54c3
+--- /dev/null
++++ b/dispatch/notifications_retry.py
+@@ -0,0 +1,112 @@
++"""Resending what failed, on an operator's say-so.
++
++`dispatch.delivery` records every attempt and schedules the next one. This is
++the sweep that acts on that schedule: it takes the attempts whose backoff has
++elapsed, replays them through `dispatch.notifications`, and records the outcome
++the same way the original attempt was recorded.
++
++Two deliberate limits.
++
++**It is never automatic.** No thread, no timer inside the portal process. The
++launcher, a scheduled task, or the Maintenance button runs it, so a resend is
++always an event the operator can point at rather than something the program did
++while nobody was looking. A freight email going out twice because two workers
++swept the same queue is a worse outcome than one going out late.
++
++**It replays from the load, not from a stored body.** Keeping a serialised
++message to resend would mean a broker receiving, hours later, a description of a
++state the load has since left. Regenerating it from the record means the resend
++says what is true now, and an attempt whose load has since been archived or
++cancelled is abandoned rather than sent.
++"""
++
++from __future__ import annotations
++
++import logging
++
++from dispatch import delivery, notifications, store
++from dispatch.observability import event, get_logger
++
++log = get_logger("dispatch.notifications_retry")
++
++#: attempt kind -> how to rebuild that message from the load as it stands now.
++REPLAY: dict[str, str] = {
++    "load_dispatched": "notify_dispatched",
++    "load_delivered": "notify_delivered",
++    "load_exception": "notify_exception",
++    "pod_generated": "notify_pod_generated",
++    "load_archived": "notify_archived",
++    "invoice_created": "notify_invoice_created",
++    "payment_received": "notify_payment_received",
++    "payment_overdue": "notify_payment_overdue",
++    "settlement_disputed": "notify_settlement_disputed",
++    "settlement_written_off": "notify_settlement_written_off",
++    "load_stalled": "notify_stalled",
++}
++
++
++def _rebuild(attempt: dict):
++    """The callable that sends this attempt again, or None if it cannot be."""
++    func_name = REPLAY.get(attempt["kind"])
++    if not func_name:
++        return None
++    func = getattr(notifications, func_name, None)
++    if func is None:
++        return None
++    load = store.get_load(attempt["subject_ref"]) if attempt["subject_ref"] else None
++    if not load:
++        return None
++
++    # Every notify_* takes the load first. The ones that also take a record take
++    # it for its identifiers, and the load carries enough to name itself; a
++    # resend that cannot be rebuilt faithfully is abandoned rather than guessed.
++    try:
++        import inspect
++
++        arity = len(inspect.signature(func).parameters)
++    except (TypeError, ValueError):
++        arity = 1
++    if arity != 1:
++        return None
++    return lambda: func(load)
++
++
++def run_due(*, limit: int = 50, now=None) -> dict:
++    """Retry everything whose backoff has elapsed. Returns what happened.
++
++    `now` is injected for the same reason `authcounters` injects it: a backoff
++    test that has to sleep four hours to prove the fourth retry is a test nobody
++    runs.
++    """
++    due = delivery.retry_due(limit=limit, now=now)
++    sent = failed = abandoned = 0
++
++    for attempt in due:
++        send = _rebuild(attempt)
++        if send is None:
++            delivery.mark_failed(
++                attempt["attempt_id"],
++                "cannot be rebuilt: the load is gone, or this message is not "
++                "one that can be regenerated from the record",
++                now=now,
++            )
++            abandoned += 1
++            continue
++        try:
++            receipt = send()
++        except Exception as exc:  # noqa: BLE001
++            delivery.mark_failed(attempt["attempt_id"], f"{type(exc).__name__}: {exc}", now=now)
++            failed += 1
++            continue
++        text = "" if receipt is None else str(receipt)
++        if text.startswith("not sent"):
++            delivery.mark_simulated(attempt["attempt_id"], receipt=text, now=now)
++        else:
++            delivery.mark_sent(attempt["attempt_id"], receipt=text, now=now)
++        sent += 1
++
++    event(
++        log, logging.INFO, "retry sweep",
++        attempted=len(due), sent=sent, failed=failed, abandoned=abandoned,
++    )
++    return {"attempted": len(due), "sent": sent, "failed": failed, "abandoned": abandoned}
+diff --git a/dispatch/observability.py b/dispatch/observability.py
+new file mode 100644
+index 0000000..9829ea1
+--- /dev/null
++++ b/dispatch/observability.py
+@@ -0,0 +1,145 @@
++"""Structured logging with a bounded file, for a program that only had print().
++
++Across `dispatch/`, `portal/` and `cin_lite/` there were 80 `print()` calls and
++zero uses of `logging`. The launcher redirects the portal's stdout and stderr
++into `server.log`, opened in append mode, with no rotation and no size cap
++anywhere -- `docs/maintenance/DISPATCH_MAINTENANCE_GUIDE.md` says so plainly:
++"Nothing rotates them automatically."
++
++That combination has one specific consequence, and it is the reason this module
++exists rather than being a tidiness exercise. `services._notify_safe()` catches
++every exception from every notification send -- twelve call sites -- and writes
++one line to stderr. So a broker notification that fails authentication produces:
++no database record, no screen indicator, no counter, no retry, and one line in an
++unbounded text file on a laptop. Mike sees Submit succeed, because the load *was*
++invoiced. Only the email died.
++
++`dispatch/delivery.py` fixes the record. This module fixes the trail:
++
++**One event per line, parseable.** `key=value` pairs after a fixed prefix, so
++`findstr` on a Windows console and a script both work on it. Not JSON: the
++primary reader is a person with a text editor on a laptop, and a wall of
++`{"levelname":` is worse for them than it is better for the script that could
++parse either.
++
++**A bounded file.** RotatingFileHandler, 5 MB x 5, so the log cannot fill the
++disk the database is on. A log that consumed the last of the disk would take
++Dispatch down to record that something went wrong.
++
++**stderr as well, always.** The launcher's capture keeps working exactly as it
++did, so nothing that used to reach `server.log` stops reaching it.
++"""
++
++from __future__ import annotations
++
++import logging
++import logging.handlers
++import os
++import sys
++from pathlib import Path
++
++LOGGER_ROOT = "dispatch"
++
++#: 5 MB x 5 files. Enough to hold weeks of a single operator's activity and
++#: small enough that it can never be the reason a disk fills.
++MAX_BYTES = int(os.environ.get("DISPATCH_LOG_MAX_BYTES", str(5 * 1024 * 1024)))
++BACKUP_COUNT = int(os.environ.get("DISPATCH_LOG_BACKUP_COUNT", "5"))
++
++_configured = False
++
++
++class KeyValueFormatter(logging.Formatter):
++    """`2026-09-12T19:40:11Z WARNING dispatch.delivery send failed kind=... id=...`
++
++    Structured fields are passed as `extra={"fields": {...}}` and appended in a
++    stable order. A value containing a space is quoted; nothing else is escaped,
++    because the alternative is a format nobody can read at the moment they need
++    to read it.
++    """
++
++    default_time_format = "%Y-%m-%dT%H:%M:%S"
++    default_msec_format = None
++
++    def formatTime(self, record, datefmt=None):  # noqa: N802 - stdlib signature
++        import time
++
++        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record.created))
++
++    def format(self, record: logging.LogRecord) -> str:
++        base = f"{self.formatTime(record)} {record.levelname} {record.name} {record.getMessage()}"
++        fields = getattr(record, "fields", None)
++        if fields:
++            parts = []
++            for key in sorted(fields):
++                value = str(fields[key])
++                parts.append(f'{key}="{value}"' if " " in value else f"{key}={value}")
++            base = f"{base} {' '.join(parts)}"
++        if record.exc_info:
++            base = f"{base}\n{self.formatException(record.exc_info)}"
++        return base
++
++
++def log_dir() -> Path:
++    """Where the log goes. The launcher's own directory when there is one."""
++    explicit = os.environ.get("DISPATCH_LOG_DIR")
++    if explicit:
++        return Path(explicit)
++    try:
++        from dispatch_launcher import locations
++
++        return Path(locations.logs_dir())
++    except Exception:  # noqa: BLE001 - the launcher is optional by doctrine
++        return Path.cwd() / "logs"
++
++
++def configure(*, force: bool = False) -> logging.Logger:
++    """Attach the handlers once. Safe to call from anywhere, any number of times."""
++    global _configured
++    logger = logging.getLogger(LOGGER_ROOT)
++    if _configured and not force:
++        return logger
++
++    logger.setLevel(os.environ.get("DISPATCH_LOG_LEVEL", "INFO").upper())
++    logger.handlers.clear()
++    logger.propagate = False
++
++    formatter = KeyValueFormatter()
++
++    stream = logging.StreamHandler(sys.stderr)
++    stream.setFormatter(formatter)
++    logger.addHandler(stream)
++
++    try:
++        directory = log_dir()
++        directory.mkdir(parents=True, exist_ok=True)
++        rotating = logging.handlers.RotatingFileHandler(
++            directory / "dispatch.log",
++            maxBytes=MAX_BYTES,
++            backupCount=BACKUP_COUNT,
++            encoding="utf-8",
++        )
++        rotating.setFormatter(formatter)
++        logger.addHandler(rotating)
++    except OSError:
++        # A read-only or missing log directory must never stop Dispatch. stderr
++        # still carries everything, and the launcher captures stderr.
++        logger.warning(
++            "log file unavailable; stderr only",
++            extra={"fields": {"log_dir": str(log_dir())}},
++        )
++
++    _configured = True
++    return logger
++
++
++def get_logger(name: str) -> logging.Logger:
++    """`get_logger(__name__)`. Configures the root handlers on first use."""
++    configure()
++    if name.startswith(LOGGER_ROOT):
++        return logging.getLogger(name)
++    return logging.getLogger(f"{LOGGER_ROOT}.{name}")
++
++
++def event(logger: logging.Logger, level: int, message: str, **fields) -> None:
++    """Log one structured event. `event(log, logging.WARNING, "send failed", kind=...)`"""
++    logger.log(level, message, extra={"fields": fields})
+diff --git a/dispatch/services.py b/dispatch/services.py
+index 0196c37..3e1261e 100644
+--- a/dispatch/services.py
++++ b/dispatch/services.py
+@@ -38,7 +38,7 @@ from dispatch.models import (
+     Settlement,
+     _utc_now,
+ )
+-from dispatch import db, money, notifications, store
++from dispatch import db, delivery, money, notifications, store
+ 
+ 
+ import sys
+@@ -70,28 +70,34 @@ def atomic(fn):
+     return wrapper
+ 
+ 
+-def _notify_safe(send) -> None:
++def _notify_safe(send, *, kind: str = "notification", subject_ref: str = "", recipient: str = "") -> None:
+     """Run a notifications.notify_* call without letting an SMTP failure
+-    turn an already-completed write into a false failure response.
+-
+-    Every notify_* call site here runs strictly after the DB write it's
+-    reporting on has already committed. An SMTP timeout/auth failure raised
+-    from smtplib (cin_lite/email_delivery.py's transport, reused by
+-    dispatch/notifications.py) is not the caller's problem to see as a 500 --
+-    the load *was* archived/delivered/invoiced; only the notification email
+-    failed. Log and continue rather than propagate.
++    turn an already-completed write into a false failure response -- and
++    without the failure disappearing.
++
++    Every notify_* call site here runs strictly after the DB write it is
++    reporting on has already committed. An SMTP timeout or auth failure is not
++    the caller's problem to see as a 500: the load *was* archived, delivered or
++    invoiced, and only the notification email failed.
++
++    That reasoning was right and it stopped half way. The failure used to go to
++    one line on stderr -- no database row, no screen, no counter, no retry --
++    so a broker notification that failed authentication left Mike looking at a
++    successful Submit and a broker who never heard from him. Every attempt now
++    goes through `dispatch.delivery`, which writes the row *before* the send and
++    records the outcome after it. The exception is still swallowed. It is
++    swallowed into something somebody can see.
++
++    Deferred until the surrounding transaction commits, and run immediately
++    when there is none: an email must not go out for work that then rolled
++    back, and a thirty-second SMTP timeout must not be served while holding a
++    write lock every other writer is queued behind.
+     """
+     def _run():
+-        try:
+-            send()
+-        except Exception as exc:  # noqa: BLE001 - any transport failure, not just SMTP
+-            print(f"[dispatch.notifications] notify failed, continuing: {exc}", file=sys.stderr)
+-
+-    # Deferred until the surrounding transaction commits, and run immediately
+-    # when there is none. Both reasons only appeared once these operations
+-    # became atomic: an email must not go out for work that then rolled back,
+-    # and a thirty-second SMTP timeout must not be served while holding a write
+-    # lock every other writer is queued behind.
++        delivery.send_with_record(
++            kind, send, subject_ref=subject_ref, recipient=recipient,
++        )
++
+     db.after_commit(_run)
+ 
+ 
+@@ -399,7 +405,10 @@ def _try_auto_dispatch(load_id: str) -> None:
+     store.upsert_visibility(vis)
+     updated = store.get_load(load_id)
+     if updated:
+-        _notify_safe(lambda: notifications.notify_dispatched(updated))
++        _notify_safe(
++        lambda: notifications.notify_dispatched(updated),
++        kind="load_dispatched", subject_ref=updated.get("load_id", ""),
++    )
+ 
+ 
+ def record_route_risk_event(
+@@ -600,7 +609,10 @@ def add_milestone(
+     # being broker-facing.
+     if event_type == "delivered" and effective_status == "delivered":
+         updated_load = store.get_load(load_id) or load
+-        _notify_safe(lambda: notifications.notify_delivered(updated_load, result))
++        _notify_safe(
++        lambda: notifications.notify_delivered(updated_load, result),
++        kind="load_delivered", subject_ref=updated_load.get("load_id", ""),
++    )
+ 
+     if refusal:
+         result = dict(result)
+@@ -772,7 +784,10 @@ def open_exception(
+         store.upsert_visibility(updated)
+ 
+     if severity in ("high", "critical"):
+-        _notify_safe(lambda: notifications.notify_exception(load, result))
++        _notify_safe(
++        lambda: notifications.notify_exception(load, result),
++        kind="load_exception", subject_ref=load.get("load_id", ""),
++    )
+ 
+     return result
+ 
+@@ -868,7 +883,10 @@ def generate_pod(
+             note=f"POD generated: {pod.pod_id}",
+         )
+ 
+-    _notify_safe(lambda: notifications.notify_pod_generated(load, result))
++    _notify_safe(
++        lambda: notifications.notify_pod_generated(load, result),
++        kind="pod_generated", subject_ref=load.get("load_id", ""),
++    )
+ 
+     return result
+ 
+@@ -975,7 +993,10 @@ def archive_load(load_id: str) -> dict:
+         )
+         store.upsert_visibility(updated)
+ 
+-    _notify_safe(lambda: notifications.notify_archived(load, result))
++    _notify_safe(
++        lambda: notifications.notify_archived(load, result),
++        kind="load_archived", subject_ref=load.get("load_id", ""),
++    )
+ 
+     return result
+ 
+@@ -1225,7 +1246,10 @@ def create_settlement(
+         notes=notes,
+     )
+     result = store.create_settlement(stl)
+-    _notify_safe(lambda: notifications.notify_invoice_created(load, result))
++    _notify_safe(
++        lambda: notifications.notify_invoice_created(load, result),
++        kind="invoice_created", subject_ref=load.get("load_id", ""),
++    )
+     return result
+ 
+ 
+@@ -1257,7 +1281,10 @@ def record_payment(
+ 
+     load = store.get_load(load_id)
+     if load and result:
+-        _notify_safe(lambda: notifications.notify_payment_received(load, result))
++        _notify_safe(
++        lambda: notifications.notify_payment_received(load, result),
++        kind="payment_received", subject_ref=load.get("load_id", ""),
++    )
+ 
+     return result
+ 
+@@ -1391,7 +1418,10 @@ def check_overdue_settlements() -> list[dict]:
+         if updated:
+             load = store.get_load(stl["load_id"])
+             if load:
+-                _notify_safe(lambda: notifications.notify_payment_overdue(load, updated))
++                _notify_safe(
++        lambda: notifications.notify_payment_overdue(load, updated),
++        kind="payment_overdue", subject_ref=load.get("load_id", ""),
++    )
+             newly_overdue.append(updated)
+ 
+     return newly_overdue
+@@ -1416,7 +1446,10 @@ def dispute_settlement(
+     )
+     load = store.get_load(load_id)
+     if load and result:
+-        _notify_safe(lambda: notifications.notify_settlement_disputed(load, result, reason))
++        _notify_safe(
++        lambda: notifications.notify_settlement_disputed(load, result, reason),
++        kind="settlement_disputed", subject_ref=load.get("load_id", ""),
++    )
+     return result
+ 
+ 
+@@ -1439,7 +1472,10 @@ def write_off_settlement(
+     )
+     load = store.get_load(load_id)
+     if load and result:
+-        _notify_safe(lambda: notifications.notify_settlement_written_off(load, result, reason))
++        _notify_safe(
++        lambda: notifications.notify_settlement_written_off(load, result, reason),
++        kind="settlement_written_off", subject_ref=load.get("load_id", ""),
++    )
+     return result
+ 
+ 
+@@ -1495,7 +1531,10 @@ def notify_stalled_loads(thresholds: dict[str, int] | None = None) -> list[dict]
+     """
+     stalled = check_stalled_loads(thresholds)
+     for load in stalled:
+-        _notify_safe(lambda: notifications.notify_stalled(load))
++        _notify_safe(
++        lambda: notifications.notify_stalled(load),
++        kind="load_stalled", subject_ref=load.get("load_id", ""),
++    )
+     return stalled
+ 
+ 
+diff --git a/dispatch_launcher/cli.py b/dispatch_launcher/cli.py
+index f0b8c0d..d6b322e 100644
+--- a/dispatch_launcher/cli.py
++++ b/dispatch_launcher/cli.py
+@@ -105,6 +105,7 @@ _ACTIONS = (
+ #: path for somebody who does not yet.
+ _COMMANDS = (
+     "menu", "status", "settings", "version", "start-here", "schedule-backup",
++    "connect-microsoft", "disconnect-microsoft", "transports",
+     *_ACTIONS,
+ )
+ 
+@@ -277,6 +278,16 @@ def main(argv: list[str] | None = None) -> int:
+         _print_version()
+         return 0
+ 
++    if args.action in ("connect-microsoft", "disconnect-microsoft", "transports"):
++        from dispatch_launcher import microsoft
++
++        if args.action == "transports":
++            print(microsoft.status_text())
++            return 0
++        if args.action == "connect-microsoft":
++            return microsoft.connect()
++        return microsoft.disconnect()
++
+     if args.action == "schedule-backup":
+         from dispatch_launcher import backup_actions
+ 
+diff --git a/dispatch_launcher/processes.py b/dispatch_launcher/processes.py
+index f6e848b..3c555fa 100644
+--- a/dispatch_launcher/processes.py
++++ b/dispatch_launcher/processes.py
+@@ -171,17 +171,42 @@ def parse_proc_stat_starttime(stat_text: str) -> str | None:
+     return fields[19]
+ 
+ 
++#: How hard to try for a command line before accepting that there is none.
++#: Five attempts at 20 ms is 100 ms in the worst case, which is far longer than
++#: a fork-to-exec window and far shorter than anything a person would notice.
++_CMDLINE_READ_ATTEMPTS = 5
++_CMDLINE_RETRY_SECONDS = 0.02
++
++
+ def _posix_facts(pid: int) -> ProcessFacts:
+     _reap_if_own_child(pid)
+     proc = Path("/proc") / str(pid)
+     if proc.is_dir() and not _is_zombie(pid):
+         command_line = None
+         created = None
+-        try:
+-            raw = (proc / "cmdline").read_bytes()
++        # /proc/<pid>/cmdline is EMPTY between fork and exec. Reading it the
++        # instant after Popen -- which is exactly when control.start() records
++        # the identity it will later check -- can therefore return nothing on a
++        # loaded machine, and a null command_line silently weakens the check
++        # that decides whether a PID still belongs to Dispatch before stop()
++        # signals it. Observed as a rare failure of
++        # tests/test_launcher.py::test_start_records_the_identity_it_will_later_check
++        # under a full-suite run, and never in isolation.
++        #
++        # A few short retries, bounded, and only while the process is alive: an
++        # exited process legitimately has an empty cmdline and waiting for it
++        # would be waiting forever.
++        for attempt in range(_CMDLINE_READ_ATTEMPTS):
++            try:
++                raw = (proc / "cmdline").read_bytes()
++            except OSError:
++                break
+             command_line = raw.replace(b"\x00", b" ").decode("utf-8", "replace").strip() or None
+-        except OSError:
+-            pass
++            if command_line is not None or attempt == _CMDLINE_READ_ATTEMPTS - 1:
++                break
++            if not proc.is_dir():
++                break
++            time.sleep(_CMDLINE_RETRY_SECONDS)
+         try:
+             created = parse_proc_stat_starttime((proc / "stat").read_text(encoding="utf-8"))
+         except OSError:
+diff --git a/portal/routes/maintenance.py b/portal/routes/maintenance.py
+index 3bfb7a9..9eebe69 100644
+--- a/portal/routes/maintenance.py
++++ b/portal/routes/maintenance.py
+@@ -35,6 +35,7 @@ def _status():
+ 
+ @maintenance_bp.route("/maintenance")
+ def maintenance():
++    from dispatch import delivery
+     from dispatch.db import get_connection
+     from dispatch.money_schema import money_column_report, verify_money_integrity
+ 
+@@ -49,9 +50,30 @@ def maintenance():
+         backup_dir=str(directory) if directory else None,
+         money_report=money_report,
+         money_integrity=money_integrity,
++        delivery_summary=delivery.summary(),
++        delivery_failures=delivery.open_failures(limit=50),
+     )
+ 
+ 
++@maintenance_bp.route("/maintenance/retry-deliveries", methods=["POST"])
++def retry_deliveries():
++    """Resend everything whose backoff has elapsed.
++
++    A button rather than a background thread. Dispatch does not resend freight
++    email on a timer nobody can see; a resend is always something the operator
++    can point at and say when it happened.
++    """
++    from dispatch import notifications_retry
++
++    result = notifications_retry.run_due()
++    flash(
++        f"Retried {result['attempted']} message(s): {result['sent']} sent, "
++        f"{result['failed']} failed, {result['abandoned']} abandoned.",
++        "success" if result["failed"] == 0 else "error",
++    )
++    return redirect(url_for("maintenance.maintenance"))
++
++
+ @maintenance_bp.route("/maintenance/backup", methods=["POST"])
+ def run_backup():
+     from dispatch_launcher import backup_actions
+diff --git a/portal/routes/pages.py b/portal/routes/pages.py
+index 804b8fa..6b5cd37 100644
+--- a/portal/routes/pages.py
++++ b/portal/routes/pages.py
+@@ -58,6 +58,11 @@ def home():
+     recent_activity = dispatch_store.get_recent_activity(limit=15)
+     chart_data = dispatch_svc.get_chart_data()
+     attention_needed = helpers.attention_needed()
++    # Messages that never reached anyone. This had no surface at all: a failed
++    # broker notification produced one line on stderr and a successful-looking
++    # Submit. The count is two indexed queries, cheap enough for every page load.
++    from dispatch import delivery as dispatch_delivery
++    delivery_summary = dispatch_delivery.summary()
+ 
+     return render_template(
+         "home.html",
+@@ -76,6 +81,7 @@ def home():
+         recent_activity=recent_activity,
+         chart_data=chart_data,
+         attention_needed=attention_needed,
++        delivery_summary=delivery_summary,
+         card_visual=helpers.card_visual,
+         format_score=helpers.format_score,
+     )
+diff --git a/portal/templates/home.html b/portal/templates/home.html
+index f33c7b9..ee92dfc 100644
+--- a/portal/templates/home.html
++++ b/portal/templates/home.html
+@@ -44,6 +44,21 @@
+     {% endif %}
+ </div>
+ 
++{% if delivery_summary and delivery_summary.needs_attention %}
++{# A message that never reached anyone had no surface at all until now: the
++   failure went to stderr, the write had already committed, and the screen said
++   the operation succeeded. This is the smallest honest correction -- the count,
++   on the page Mike opens first. #}
++<div class="card-section" id="undelivered">
++    <h2>Messages that have not reached anyone</h2>
++    <p>
++        <span class="truth truth-unavailable">{{ delivery_summary.needs_attention }}</span>
++        outbound message(s) are queued, failed or abandoned.
++        <a href="{{ url_for('maintenance.maintenance') }}">See them on Maintenance</a>.
++    </p>
++</div>
++{% endif %}
++
+ {% if attention_needed %}
+ <div class="card-section" id="attention-needed">
+     <h2>Attention Needed Across Departments</h2>
+diff --git a/portal/templates/maintenance.html b/portal/templates/maintenance.html
+index df709b4..86914d8 100644
+--- a/portal/templates/maintenance.html
++++ b/portal/templates/maintenance.html
+@@ -56,6 +56,61 @@
+     </p>
+ </div>
+ 
++<div class="card-section">
++    <h2>Outbound messages</h2>
++    {# The state that had nowhere to be displayed. A notification that failed
++       authentication used to produce one line on stderr: no row, no counter,
++       no screen. Mike saw Submit succeed and the broker heard nothing. #}
++    <p>
++        {% if delivery_summary.needs_attention %}
++            <span class="truth truth-unavailable">{{ delivery_summary.needs_attention }}</span>
++            outbound message(s) have not reached anyone.
++            {% if delivery_summary.abandoned %}
++                <strong>{{ delivery_summary.abandoned }}</strong> gave up after five attempts
++                and need a decision.
++            {% endif %}
++        {% else %}
++            Every outbound message has been accepted by a transport.
++        {% endif %}
++    </p>
++
++    <table class="data-table">
++        <tr>
++            {% for state, n in delivery_summary.counts.items() %}
++            <td class="label">{{ state }}</td><td>{{ n }}</td>
++            {% endfor %}
++        </tr>
++    </table>
++
++    {% if delivery_summary.retry_due %}
++    <form method="post" action="{{ url_for('maintenance.retry_deliveries') }}">
++        <button class="btn" type="submit">
++            Retry {{ delivery_summary.retry_due }} due message(s)
++        </button>
++    </form>
++    <p class="muted">
++        Nothing is resent on a timer. A resend is always something you did, at a
++        time you can point at.
++    </p>
++    {% endif %}
++
++    {% if delivery_failures %}
++    <table class="data-table">
++        <tr><th>When</th><th>What</th><th>Load</th><th>Tries</th><th>State</th><th>Why it failed</th></tr>
++        {% for a in delivery_failures %}
++        <tr>
++            <td>{{ a.updated_at }}</td>
++            <td>{{ a.kind }}</td>
++            <td>{{ a.subject_ref or '—' }}</td>
++            <td>{{ a.attempt_count }}</td>
++            <td><span class="truth truth-{{ a.status|lower }}">{{ a.status }}</span></td>
++            <td>{{ a.last_error or '—' }}</td>
++        </tr>
++        {% endfor %}
++    </table>
++    {% endif %}
++</div>
++
+ <div class="card-section">
+     <h2>Stored money</h2>
+     <p>
+diff --git a/tests/test_delivery_visibility.py b/tests/test_delivery_visibility.py
+new file mode 100644
+index 0000000..16660b3
+--- /dev/null
++++ b/tests/test_delivery_visibility.py
+@@ -0,0 +1,274 @@
++"""A message that did not reach anyone says so, somewhere a person will look.
++
++`_notify_safe()` caught every exception from every notification send -- twelve
++call sites -- and wrote one line to stderr. The reasoning was right as far as it
++went: the load *was* invoiced, and an SMTP failure should not turn a committed
++write into a 500. The second half was missing. There was no database row, no
++screen indicator, no counter and no retry, so a broker notification that failed
++authentication left Mike looking at a successful Submit and a broker who never
++heard from him.
++
++The truth vocabulary already had the word for it. Nothing was in a position to
++display it, because nothing recorded it.
++"""
++
++from __future__ import annotations
++
++import logging
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from dispatch import delivery, services
++from dispatch.db import set_db_path
++
++NOW = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
++
++
++@pytest.fixture
++def database(tmp_path):
++    set_db_path(tmp_path / "dispatch.db")
++    try:
++        yield
++    finally:
++        set_db_path(None)
++
++
++def _boom(message="535 5.7.139 Authentication unsuccessful"):
++    def send():
++        raise RuntimeError(message)
++
++    return send
++
++
++class TestTheRecordItself:
++    def test_a_failed_send_leaves_a_row_naming_the_reason(self, database):
++        result = delivery.send_with_record(
++            "broker_email", _boom(), subject_ref="LOAD-1", recipient="ops@broker.test"
++        )
++        assert result["ok"] is False
++
++        row = delivery.get(result["attempt_id"])
++        assert row["status"] == delivery.FAILED
++        assert "535" in row["last_error"]
++        assert row["subject_ref"] == "LOAD-1"
++        assert row["recipient"] == "ops@broker.test"
++
++    def test_the_row_exists_before_the_send_is_attempted(self, database):
++        """A process killed mid-send must leave something the next sweep can see."""
++        seen = {}
++
++        def send():
++            seen["rows"] = delivery.list_attempts()
++            return "sent via smtp.example.com"
++
++        delivery.send_with_record("broker_email", send, subject_ref="LOAD-1")
++        assert len(seen["rows"]) == 1
++        assert seen["rows"][0]["status"] == delivery.QUEUED
++
++    def test_a_successful_send_records_the_receipt(self, database):
++        result = delivery.send_with_record(
++            "broker_email", lambda: "sent via smtp.office365.com", subject_ref="LOAD-1"
++        )
++        assert delivery.get(result["attempt_id"])["status"] == delivery.SENT
++        assert "smtp.office365.com" in delivery.get(result["attempt_id"])["receipt"]
++
++    def test_a_local_outbox_write_is_not_recorded_as_sent(self, database):
++        """"Written to Archive/Outbox" and "a mail server accepted it" are
++        different facts, and only one means the broker heard from Mike."""
++        result = delivery.send_with_record(
++            "broker_email",
++            lambda: "not sent (SMTP not configured); written to /Archive/Outbox/x.eml",
++            subject_ref="LOAD-1",
++        )
++        assert result["status"] == delivery.SIMULATED
++        assert delivery.get(result["attempt_id"])["status"] == delivery.SIMULATED
++
++    def test_the_exception_is_still_swallowed(self, database):
++        """The committed write must not fail because the email did."""
++        delivery.send_with_record("broker_email", _boom(), subject_ref="LOAD-1")  # no raise
++
++
++class TestRetry:
++    def test_backoff_lengthens_and_then_gives_up(self, database):
++        result = delivery.send_with_record("broker_email", _boom(), subject_ref="L", now=NOW)
++        attempt_id = result["attempt_id"]
++
++        expected = [1, 5, 15, 60]
++        assert delivery.get(attempt_id)["next_retry_at"] == "2026-03-01T12:01:00Z"
++        for index, minutes in enumerate(expected[1:], start=1):
++            outcome = delivery.mark_failed(attempt_id, "still failing", now=NOW)
++            assert outcome["status"] == delivery.FAILED
++            assert outcome["next_retry_at"] == (NOW + timedelta(minutes=minutes)).strftime(
++                "%Y-%m-%dT%H:%M:%SZ"
++            )
++
++        final = delivery.mark_failed(attempt_id, "still failing", now=NOW)
++        assert final["status"] == delivery.ABANDONED
++        assert final["next_retry_at"] is None
++
++    def test_nothing_is_due_before_its_time(self, database):
++        delivery.send_with_record("broker_email", _boom(), subject_ref="L", now=NOW)
++        assert delivery.retry_due(now=NOW) == []
++        assert len(delivery.retry_due(now=NOW + timedelta(minutes=2))) == 1
++
++    def test_an_abandoned_attempt_is_never_due_again(self, database):
++        result = delivery.send_with_record("broker_email", _boom(), subject_ref="L", now=NOW)
++        for _ in range(delivery.MAX_ATTEMPTS):
++            delivery.mark_failed(result["attempt_id"], "no", now=NOW)
++        assert delivery.retry_due(now=NOW + timedelta(days=30)) == []
++
++    def test_a_success_clears_the_retry(self, database):
++        result = delivery.send_with_record("broker_email", _boom(), subject_ref="L", now=NOW)
++        delivery.mark_sent(result["attempt_id"], receipt="sent via relay", now=NOW)
++        row = delivery.get(result["attempt_id"])
++        assert row["status"] == delivery.SENT
++        assert row["next_retry_at"] is None
++        assert row["last_error"] == ""
++
++
++class TestTheRetrySweep:
++    def test_it_resends_what_is_due_and_records_the_outcome(self, database, monkeypatch):
++        from dispatch import notifications, notifications_retry
++
++        load = services.create_load(customer="Acme")
++        result = delivery.send_with_record(
++            "load_stalled", _boom(), subject_ref=load["load_id"], now=NOW
++        )
++        monkeypatch.setattr(notifications, "notify_stalled", lambda ld: "sent via relay")
++
++        outcome = notifications_retry.run_due(now=NOW)
++        assert outcome["attempted"] == 0, "the first retry is not due for a minute"
++
++        outcome = notifications_retry.run_due(now=NOW + timedelta(minutes=2))
++        assert outcome["sent"] == 1
++        assert delivery.get(result["attempt_id"])["status"] == delivery.SENT
++
++    def test_an_attempt_whose_load_is_gone_is_abandoned_not_guessed(self, database):
++        from dispatch import notifications_retry
++
++        delivery.send_with_record(
++            "load_stalled", _boom(), subject_ref="LOAD-DELETED", now=NOW
++        )
++        outcome = notifications_retry.run_due(now=NOW + timedelta(minutes=2))
++        assert outcome["abandoned"] == 1
++        assert "cannot be rebuilt" in delivery.open_failures()[0]["last_error"]
++
++    def test_nothing_resends_on_a_timer(self, database, monkeypatch):
++        """No thread, no scheduler inside the portal process."""
++        import threading
++
++        started = []
++        monkeypatch.setattr(threading.Thread, "start", lambda self: started.append(self))
++        delivery.send_with_record("broker_email", _boom(), subject_ref="L")
++        assert started == []
++
++
++class TestThroughAServiceOperation:
++    def test_a_failing_delivery_notification_is_recorded_not_printed(self, database, monkeypatch):
++        from dispatch import notifications
++
++        load = services.create_load(customer="Acme")
++        load_id = load["load_id"]
++        for event_type in ("dispatched", "en_route_pickup", "arrived_pickup", "loaded",
++                           "departed_pickup", "in_transit", "arrived_delivery"):
++            services.add_milestone(load_id, event_type)
++
++        monkeypatch.setattr(notifications, "notify_delivered", lambda *a, **k: _boom()())
++        services.add_milestone(load_id, "delivered")
++
++        failures = delivery.open_failures()
++        assert len(failures) == 1
++        assert failures[0]["kind"] == "load_delivered"
++        assert failures[0]["subject_ref"] == load_id
++        # The write itself still committed. That was always the point.
++        assert services.get_load(load_id)["status"] == "delivered"
++
++    def test_the_summary_counts_what_needs_attention(self, database):
++        delivery.send_with_record("broker_email", _boom(), subject_ref="A")
++        delivery.send_with_record("broker_email", lambda: "sent via relay", subject_ref="B")
++        summary = delivery.summary()
++        assert summary["counts"][delivery.FAILED] == 1
++        assert summary["counts"][delivery.SENT] == 1
++        assert summary["needs_attention"] == 1
++
++
++class TestTheScreens:
++    @pytest.fixture
++    def client(self, database, monkeypatch, tmp_path):
++        monkeypatch.setenv("PORTAL_DATA_DIR", str(tmp_path / "PortalData"))
++        from portal.app import create_app
++
++        app = create_app({"TESTING": True})
++        app.config["LOGIN_DISABLED"] = True
++        return app.test_client()
++
++    def test_home_shows_the_count(self, client, database):
++        delivery.send_with_record("broker_email", _boom(), subject_ref="LOAD-1")
++        body = client.get("/home").get_data(as_text=True)
++        assert "have not reached anyone" in body
++
++    def test_home_says_nothing_when_there_is_nothing_to_say(self, client, database):
++        body = client.get("/home").get_data(as_text=True)
++        assert "have not reached anyone" not in body
++
++    def test_maintenance_lists_them_with_the_reason(self, client, database):
++        delivery.send_with_record(
++            "broker_email", _boom(), subject_ref="LOAD-1", recipient="ops@broker.test"
++        )
++        body = client.get("/maintenance").get_data(as_text=True)
++        assert "535" in body
++        assert "LOAD-1" in body
++
++
++class TestLogging:
++    def test_a_failure_is_logged_with_structured_fields(self, database, caplog):
++        from dispatch.observability import configure
++
++        # configure() owns its logger's handlers, so a captor has to be attached
++        # after it rather than before -- which is also how a host application
++        # would do it.
++        logger = configure(force=True)
++        captured: list[logging.LogRecord] = []
++
++        class Captor(logging.Handler):
++            def emit(self, record):
++                captured.append(record)
++
++        logger.addHandler(Captor())
++        delivery.send_with_record("broker_email", _boom(), subject_ref="LOAD-1")
++
++        record = next(r for r in captured if r.name == "dispatch.delivery")
++        assert record.fields["status"] == delivery.FAILED
++        assert "535" in record.fields["error"]
++        assert record.fields["attempt"].startswith("DLV-")
++
++    def test_the_log_file_is_bounded(self, tmp_path, monkeypatch):
++        """An unbounded log on the disk the database lives on is a way to lose both."""
++        import logging.handlers
++
++        from dispatch import observability
++
++        monkeypatch.setenv("DISPATCH_LOG_DIR", str(tmp_path / "logs"))
++        logger = observability.configure(force=True)
++        rotating = [h for h in logger.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
++        assert rotating, "no rotating handler; the log would grow without limit"
++        assert rotating[0].maxBytes > 0
++        assert rotating[0].backupCount > 0
++
++    def test_stderr_still_carries_everything(self, tmp_path, monkeypatch):
++        """The launcher captures stderr into server.log; that must keep working."""
++        from dispatch import observability
++
++        monkeypatch.setenv("DISPATCH_LOG_DIR", str(tmp_path / "logs"))
++        logger = observability.configure(force=True)
++        assert any(type(h) is logging.StreamHandler for h in logger.handlers)
++
++    def test_an_unwritable_log_directory_does_not_stop_dispatch(self, tmp_path, monkeypatch):
++        from dispatch import observability
++
++        blocker = tmp_path / "not-a-dir"
++        blocker.write_text("", encoding="utf-8")
++        monkeypatch.setenv("DISPATCH_LOG_DIR", str(blocker))
++        logger = observability.configure(force=True)  # must not raise
++        assert logger.handlers
+-- 
+2.43.0
+

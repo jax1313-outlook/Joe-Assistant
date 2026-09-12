@@ -1,0 +1,1645 @@
+From 3b1ea1b50e11bbd241d8edce1fe045e0b5ddefa7 Mon Sep 17 00:00:00 2001
+From: Dispatch Sandbox <jax1313@outlook.com>
+Date: Sat, 12 Sep 2026 20:27:20 +0000
+Subject: [PATCH 10/12] Wire the capacity engine into production, and make
+ appointment times readable
+
+dispatch/capacity.py is 1,861 lines with 1,000 lines of tests against it, and
+none of it could be reached from the running program: DynamicCapacity was never
+constructed outside tests/, there was no table a profile could live in, and the
+one production call into scoring is portal/helpers.py -> score_load(data) with
+no capacity -- whose own docstring says that without one "the result is exactly
+what it has always been". Dead code that is well tested is the hard case: it
+raised the gated coverage figure while evaluating nothing.
+
+Wired, not reserved. docs/MANAGER.md is this repository's precedent for formally
+reserving a capability and it is explicit about what it reserves -- something
+"named in planning and never built". That does not reach working code, and the
+Purpose Statement's second verb is Evaluate Possibilities. What was missing was
+one table wide: capacity_profiles, one row per truck, sections as JSON because
+they are a document. Utilization is deliberately not persisted -- used_weight_lbs
+describes what is on the trailer now, and a saved one comes back as a claim
+about today made from last week's freight.
+
+An unprofiled truck is UNCONFIGURED on the load page, never "probably fine".
+Assuming a 53-foot dry van is how freight gets accepted onto a trailer that
+cannot carry it.
+
+Wiring it surfaced why it could never have worked as it stood.
+parse_operational_timestamp rejects a timestamp with no offset -- correctly: "a
+pickup window in an unstated zone is genuinely ambiguous, and guessing costs a
+load" -- and the caller raises a SEVERITY_BLOCKING finding. The load form's own
+placeholder was `YYYY-MM-DD HH:MM`. A naive timestamp. Every load entered in the
+documented format would have produced a blocking finding, and the conclusion a
+person draws is that the capacity engine refuses everything.
+
+The same gap had a quieter effect: get_load_calendar() selected a month by
+string prefix on a free-text field, so a load typed `9/14/2026 08:00` -- what a
+US dispatcher writes by hand, accepted without complaint by a text input -- was
+silently absent from the calendar. No error, no warning, no row. And the day was
+sliced off the raw string, so a delivery at 2026-09-15T01:00Z filed on the 15th
+when in Eastern time it is the evening of the 14th.
+
+dispatch/timestamps.py resolves both without weakening the engine's rule: the
+operator's zone is configuration (DISPATCH_OPERATING_TIMEZONE), and attaching it
+to a value typed without one is not guessing -- a dispatcher who types 08:00
+means eight in the morning where they are. Attaching UTC would be the guess. A
+value that already carries an offset is stored untouched, and one that cannot be
+read is kept exactly as typed and reported, never rewritten or dropped.
+
+portal/models/conflict.py had a fourth hand-rolled datetime parser whose formats
+carried no offset, so it would have silently stopped detecting every conflict.
+It now uses the one parser, and compares instants: overlap arithmetic on naive
+local times is how a conflict is missed by four hours.
+
+And a |local_time filter, because every timestamp in this program was rendered
+raw -- 2026-08-12T14:00:00-04:00 on the rate confirmation a broker receives and
+on the driver's own screen. That is a 70 MPH failure: the driver is moving,
+tired and has one hand, and an ISO string makes him do arithmetic to find out
+when the appointment is.
+---
+ dispatch/capacity_store.py                    | 216 +++++++++++++++
+ dispatch/db.py                                |   7 +-
+ dispatch/services.py                          | 172 +++++++++++-
+ dispatch/timestamps.py                        | 228 +++++++++++++++
+ portal/app.py                                 |  22 ++
+ portal/models/conflict.py                     |  25 +-
+ portal/routes/dispatch_api.py                 |  68 +++++
+ portal/routes/pages.py                        |   6 +
+ portal/templates/dispatch.html                |   4 +-
+ portal/templates/dispatch_detail.html         |  35 ++-
+ portal/templates/driver_home.html             |   4 +-
+ portal/templates/load_readonly_detail.html    |   2 +-
+ portal/templates/rate_confirmation_print.html |   4 +-
+ portal/templates/stakeholder_view.html        |   2 +-
+ tests/test_booking.py                         |  34 ++-
+ tests/test_capacity_is_reachable.py           | 259 ++++++++++++++++++
+ tests/test_rate_confirmation_print.py         |   8 +-
+ tests/test_timestamps.py                      | 175 ++++++++++++
+ 18 files changed, 1232 insertions(+), 39 deletions(-)
+ create mode 100644 dispatch/capacity_store.py
+ create mode 100644 dispatch/timestamps.py
+ create mode 100644 tests/test_capacity_is_reachable.py
+ create mode 100644 tests/test_timestamps.py
+
+diff --git a/dispatch/capacity_store.py b/dispatch/capacity_store.py
+new file mode 100644
+index 0000000..4051c72
+--- /dev/null
++++ b/dispatch/capacity_store.py
+@@ -0,0 +1,216 @@
++"""Where a truck's capacity profile lives, so the capacity engine can be reached.
++
++`dispatch/capacity.py` is 1,861 lines with 1,000 lines of tests against it, and
++before this module nothing in the running program could use any of it:
++
++  * `DynamicCapacity(` was never instantiated outside `tests/`;
++  * there was no table it could be stored in;
++  * the only production call into `dispatch/scoring.py` is
++    `portal/helpers.py` -> `score_load(data)` with no `capacity` argument, and
++    `score_load`'s own docstring says that without one "the result is exactly
++    what it has always been".
++
++That is a worse state than either alternative. Dead code that is *well tested*
++is invisible -- it raises the gated coverage figure while doing nothing -- and a
++reviewer reading the test file concludes the capability is in service.
++
++**The resolution is to wire it, not to reserve it.** `docs/MANAGER.md` is the
++repository's precedent for formally reserving a capability, and it is explicit
++about what it is reserving: something "named in planning and never built". That
++precedent does not reach working code. The Purpose Statement's second verb is
++*Evaluate Possibilities*, and this engine is the only thing in the repository
++that does it; shelving it would remove a built capability to tidy up a gap that
++is one table wide.
++
++What was actually missing is small: an asset's capacity profile had nowhere to
++be written down. Equipment rows already exist, so a profile is one row per
++truck, and the sections serialise as JSON because they are a document -- nothing
++queries inside them, and a column per field would be forty columns that change
++whenever the engine grows one.
++
++**Utilization is not stored.** `used_weight_lbs` and its siblings describe
++freight physically on a trailer right now, and reconstructing yesterday's
++utilization from a saved row would present a stale fact as a current one. A
++rehydrated profile carries the verified specification and an empty load.
++"""
++
++from __future__ import annotations
++
++import json
++from dataclasses import asdict, fields, is_dataclass
++from datetime import datetime, timezone
++
++from dispatch.capacity import (
++    CargoArrangementCapacity,
++    DynamicCapacity,
++    PhysicalCapacity,
++    PositionCapacity,
++    ReserveCapacity,
++    TimeCapacity,
++)
++from dispatch.db import get_connection
++
++_SCHEMA = """
++CREATE TABLE IF NOT EXISTS capacity_profiles (
++    equipment_id  TEXT PRIMARY KEY,
++    capacity_id   TEXT NOT NULL,
++    driver_id     TEXT NOT NULL DEFAULT '',
++    physical      TEXT NOT NULL DEFAULT '{}',
++    time_capacity TEXT NOT NULL DEFAULT '{}',
++    position      TEXT NOT NULL DEFAULT '{}',
++    reserve       TEXT NOT NULL DEFAULT '{}',
++    cargo         TEXT NOT NULL DEFAULT '{}',
++    created_at    TEXT NOT NULL,
++    updated_at    TEXT NOT NULL
++);
++"""
++
++#: column -> the dataclass it holds. Utilization and the ledgers are absent by
++#: design; see the module docstring.
++SECTIONS = {
++    "physical": PhysicalCapacity,
++    "time_capacity": TimeCapacity,
++    "position": PositionCapacity,
++    "reserve": ReserveCapacity,
++    "cargo": CargoArrangementCapacity,
++}
++
++#: Utilization describes what is on the trailer now. Never persisted, never
++#: rehydrated -- a saved "used 18,000 lbs" would come back as a claim about
++#: today's trailer made from last week's freight.
++UTILIZATION_FIELDS = (
++    "used_weight_lbs", "used_volume_cuft", "used_linear_feet", "used_pallets",
++)
++
++
++def init_capacity_schema(conn) -> None:
++    conn.executescript(_SCHEMA)
++
++
++def _utc_now() -> str:
++    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
++
++
++def _dump(section) -> str:
++    data = asdict(section)
++    for name in UTILIZATION_FIELDS:
++        data.pop(name, None)
++    return json.dumps(data, sort_keys=True)
++
++
++def _hydrate(cls, raw: str):
++    """Build a section from stored JSON, ignoring fields the class no longer has.
++
++    Forward and backward compatible on purpose: a profile written by an older
++    build must still load after the engine grows a field, and a field that was
++    removed must not crash the constructor. A capacity profile that cannot be
++    read is a truck that silently stops being assessable.
++    """
++    try:
++        data = json.loads(raw) if raw else {}
++    except ValueError:
++        data = {}
++    if not isinstance(data, dict):
++        data = {}
++    allowed = {f.name for f in fields(cls)} if is_dataclass(cls) else set()
++    return cls(**{k: v for k, v in data.items() if k in allowed})
++
++
++def save_profile(capacity: DynamicCapacity) -> dict:
++    """Write (or replace) the profile for this truck. One row per equipment."""
++    if not capacity.equipment_id:
++        raise ValueError("a capacity profile must name the equipment it describes")
++    now = _utc_now()
++    with get_connection() as conn:
++        conn.execute(
++            """INSERT INTO capacity_profiles
++                   (equipment_id, capacity_id, driver_id, physical, time_capacity,
++                    position, reserve, cargo, created_at, updated_at)
++               VALUES (?,?,?,?,?,?,?,?,?,?)
++               ON CONFLICT(equipment_id) DO UPDATE SET
++                   capacity_id=excluded.capacity_id,
++                   driver_id=excluded.driver_id,
++                   physical=excluded.physical,
++                   time_capacity=excluded.time_capacity,
++                   position=excluded.position,
++                   reserve=excluded.reserve,
++                   cargo=excluded.cargo,
++                   updated_at=excluded.updated_at""",
++            (
++                capacity.equipment_id, capacity.capacity_id, capacity.driver_id,
++                _dump(capacity.physical), _dump(capacity.time),
++                _dump(capacity.position), _dump(capacity.reserve), _dump(capacity.cargo),
++                now, now,
++            ),
++        )
++    return get_profile_row(capacity.equipment_id)
++
++
++def get_profile_row(equipment_id: str) -> dict | None:
++    with get_connection() as conn:
++        row = conn.execute(
++            "SELECT * FROM capacity_profiles WHERE equipment_id=?", (equipment_id,)
++        ).fetchone()
++    return dict(row) if row else None
++
++
++def load_capacity(equipment_id: str, *, driver_id: str = "") -> DynamicCapacity | None:
++    """The truck's capacity as the engine wants it, or None if none is on file.
++
++    None is a real answer and callers must handle it: an unprofiled truck is
++    `UNCONFIGURED`, not "assume a 53-foot dry van". Inventing a specification is
++    how a load gets accepted onto a trailer that cannot carry it.
++    """
++    row = get_profile_row(equipment_id)
++    if row is None:
++        return None
++    return DynamicCapacity(
++        capacity_id=row["capacity_id"],
++        equipment_id=row["equipment_id"],
++        driver_id=driver_id or row["driver_id"],
++        physical=_hydrate(PhysicalCapacity, row["physical"]),
++        time=_hydrate(TimeCapacity, row["time_capacity"]),
++        position=_hydrate(PositionCapacity, row["position"]),
++        reserve=_hydrate(ReserveCapacity, row["reserve"]),
++        cargo=_hydrate(CargoArrangementCapacity, row["cargo"]),
++        updated_at=row["updated_at"],
++    )
++
++
++def list_profiles() -> list[dict]:
++    with get_connection() as conn:
++        rows = conn.execute(
++            "SELECT * FROM capacity_profiles ORDER BY equipment_id"
++        ).fetchall()
++    return [dict(r) for r in rows]
++
++
++def delete_profile(equipment_id: str) -> bool:
++    with get_connection() as conn:
++        cursor = conn.execute(
++            "DELETE FROM capacity_profiles WHERE equipment_id=?", (equipment_id,)
++        )
++    return cursor.rowcount > 0
++
++
++def profile_coverage() -> dict:
++    """How many trucks can be assessed, and how many cannot.
++
++    A number a screen can state. "Capacity is implemented" and "three of your
++    four trucks have no profile, so three of them cannot be assessed" are
++    different facts, and only the second one is actionable.
++    """
++    from dispatch import store
++
++    equipment = store.list_equipment()
++    profiled = {row["equipment_id"] for row in list_profiles()}
++    unprofiled = [e for e in equipment if e["equipment_id"] not in profiled]
++    return {
++        "total": len(equipment),
++        "profiled": len([e for e in equipment if e["equipment_id"] in profiled]),
++        "unprofiled": [
++            {"equipment_id": e["equipment_id"], "label": e.get("unit_number") or e["equipment_id"]}
++            for e in unprofiled
++        ],
++        "complete": bool(equipment) and not unprofiled,
++    }
+diff --git a/dispatch/db.py b/dispatch/db.py
+index b8d4d40..132013b 100644
+--- a/dispatch/db.py
++++ b/dispatch/db.py
+@@ -457,6 +457,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
+     # `dispatch.security` schema here; that stack is superseded by the Portal
+     # PIN gate already on main (CF-03) and was deliberately not recovered.
+     from dispatch.authcounters import init_auth_counter_schema
++    from dispatch.capacity_store import init_capacity_schema
+     from dispatch.delivery import init_delivery_schema
+     from dispatch.connectors.audit import init_connector_schema
+     from dispatch.spine.db import init_spine_schema
+@@ -472,6 +473,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
+     # Every outbound message attempt, recorded before it is tried. A failed
+     # broker notification used to produce one line on stderr and nothing else.
+     init_delivery_schema(conn)
++    # One capacity profile per truck. Without a table, dispatch/capacity.py --
++    # 1,861 lines with 1,000 lines of tests -- had no way to be reached from the
++    # running program at all. See dispatch/capacity_store.py.
++    init_capacity_schema(conn)
+ 
+ 
+ def _apply_migrations(conn: sqlite3.Connection) -> None:
+@@ -532,7 +537,7 @@ BUSY_TIMEOUT_MS = int(os.environ.get("DISPATCH_SQLITE_BUSY_TIMEOUT_MS", "5000"))
+ #: `schema_state` after a successful initialisation so a later connection can
+ #: tell "already built, and built by this version of the code" from "built by
+ #: an older one" with a single cheap read.
+-SCHEMA_REVISION = 4
++SCHEMA_REVISION = 5
+ 
+ #: Database paths this *process* has already initialised. The expensive part of
+ #: `_init_db` is not the work, it is that it ran on every one of the ~160
+diff --git a/dispatch/services.py b/dispatch/services.py
+index 3e1261e..3a89876 100644
+--- a/dispatch/services.py
++++ b/dispatch/services.py
+@@ -38,7 +38,7 @@ from dispatch.models import (
+     Settlement,
+     _utc_now,
+ )
+-from dispatch import db, delivery, money, notifications, store
++from dispatch import db, delivery, money, notifications, store, timestamps
+ 
+ 
+ import sys
+@@ -182,8 +182,8 @@ def create_load(
+         broker_shipper=broker_shipper,
+         pickup_location=pickup_location,
+         delivery_location=delivery_location,
+-        pickup_datetime=pickup_datetime,
+-        delivery_datetime=delivery_datetime,
++        pickup_datetime=timestamps.normalize(pickup_datetime)["value"],
++        delivery_datetime=timestamps.normalize(delivery_datetime)["value"],
+         equipment=equipment,
+         driver=driver,
+         driver_id=driver_id,
+@@ -275,6 +275,22 @@ def _record_status_change(
+     ))
+ 
+ 
++def _normalize_appointment_fields(fields: dict) -> dict:
++    """Attach the operator's zone to an appointment time typed without one.
++
++    Not a guess: a dispatcher who types 08:00 means eight in the morning where
++    they are, and recording that is what makes the value usable. Attaching UTC
++    would be the guess. A value that already carries an offset is left alone,
++    and one that cannot be read at all is stored exactly as typed -- see
++    dispatch/timestamps.py for why both of those matter.
++    """
++    out = dict(fields)
++    for name in ("pickup_datetime", "delivery_datetime"):
++        if name in out:
++            out[name] = timestamps.normalize(out[name])["value"]
++    return out
++
++
+ def update_load(load_id: str, **fields) -> dict | None:
+     if "driver_id" in fields and fields["driver_id"]:
+         _validate_driver_assignment(fields["driver_id"])
+@@ -289,7 +305,7 @@ def update_load(load_id: str, **fields) -> dict | None:
+         if current:
+             old_status = current["status"]
+             validate_status_transition(old_status, fields["status"])
+-    result = store.update_load(load_id, **fields)
++    result = store.update_load(load_id, **_normalize_appointment_fields(fields))
+     if result and old_status and "status" in fields:
+         # Trigger condition deliberately unchanged from before C3, including
+         # for a no-op write where old_status == fields["status"]. Preserving
+@@ -2155,13 +2171,31 @@ def get_load_calendar(year: int, month: int) -> dict:
+     delivery_by_day: dict[str, list[dict]] = defaultdict(list)
+ 
+     month_prefix = f"{year:04d}-{month:02d}"
++    unreadable: list[dict] = []
+     for ld in all_loads:
+-        p = ld.get("pickup_datetime", "")
+-        if p and p[:7] == month_prefix:
+-            pickup_by_day[p[:10]].append(ld)
+-        d = ld.get("delivery_datetime", "")
+-        if d and d[:7] == month_prefix:
+-            delivery_by_day[d[:10]].append(ld)
++        # Parsed, not string-sliced. `p[:7] == "2026-09"` on a free-text field
++        # meant a load typed as "9/14/2026 08:00" -- the format a US dispatcher
++        # writes by hand, and one the text input accepts without complaint --
++        # was silently absent from the calendar: no error, no warning, no row.
++        # It also read the day off the raw string, so a delivery at
++        # 2026-09-15T01:00Z landed on the 15th when for a dispatcher in Eastern
++        # time it is the evening of the 14th.
++        pickup_day = timestamps.local_date(ld.get("pickup_datetime"))
++        if pickup_day[:7] == month_prefix:
++            pickup_by_day[pickup_day].append(ld)
++        delivery_day = timestamps.local_date(ld.get("delivery_datetime"))
++        if delivery_day[:7] == month_prefix:
++            delivery_by_day[delivery_day].append(ld)
++
++        # A load whose appointment cannot be read is reported rather than
++        # dropped. Silent omission from the one view that is meant to show
++        # everything is the defect this replaces.
++        for field_name in ("pickup_datetime", "delivery_datetime"):
++            raw = ld.get(field_name) or ""
++            if raw and timestamps.normalize(raw)["status"] == timestamps.UNVERIFIED:
++                unreadable.append(
++                    {"load_id": ld["load_id"], "field": field_name, "value": raw}
++                )
+ 
+     cal = calendar.Calendar(firstweekday=6)
+     weeks = cal.monthdayscalendar(year, month)
+@@ -2173,6 +2207,8 @@ def get_load_calendar(year: int, month: int) -> dict:
+         "weeks": weeks,
+         "pickups": dict(pickup_by_day),
+         "deliveries": dict(delivery_by_day),
++        "unreadable": unreadable,
++        "timezone": timestamps.timezone_name(),
+     }
+ 
+ 
+@@ -3537,3 +3573,119 @@ def check_compliance_alerts() -> dict:
+         "expired": expired_count,
+         "expiring_soon": expiring_count,
+     }
++
++
++# ── Capacity ──────────────────────────────────────────────────────────
++#
++# The capacity engine reaches production here. Before this, `DynamicCapacity`
++# was never instantiated outside tests, there was no table for a profile, and
++# the one production call into scoring passed no capacity at all -- so 1,861
++# lines of the most careful reasoning in the repository evaluated nothing.
++
++
++@atomic
++def set_equipment_capacity_profile(
++    equipment_id: str,
++    *,
++    max_weight_lbs: float,
++    max_volume_cuft: float = 0.0,
++    max_linear_feet: float = 0.0,
++    max_pallets: int = 0,
++    equipment_type: str = "dry_van",
++    source: str,
++    verified_by: str | None = None,
++    has_liftgate: bool = False,
++    has_ramp: bool = False,
++    has_temp_control: bool = False,
++    driver_id: str = "",
++) -> dict:
++    """Record what a truck can physically carry.
++
++    `source` is required and `verified_by` has no default, because
++    `apply_asset_profile` refuses to manufacture a verification -- a
++    specification nobody signed for is CONFIGURED, not VERIFIED, and the
++    difference decides whether a refusal is trustworthy.
++    """
++    from dispatch import capacity_store
++    from dispatch.capacity import DynamicCapacity
++
++    equipment = store.get_equipment(equipment_id)
++    if not equipment:
++        raise ValueError(f"Equipment not found: {equipment_id}")
++
++    existing = capacity_store.load_capacity(equipment_id, driver_id=driver_id)
++    capacity = existing or DynamicCapacity(equipment_id=equipment_id, driver_id=driver_id)
++    capacity.apply_asset_profile(
++        asset_profile_id=f"AP-{equipment_id}",
++        max_weight_lbs=max_weight_lbs,
++        max_volume_cuft=max_volume_cuft,
++        max_linear_feet=max_linear_feet,
++        max_pallets=max_pallets,
++        source=source,
++        equipment_type=equipment_type or equipment.get("equipment_type", "dry_van"),
++        verified_by=verified_by,
++        has_liftgate=has_liftgate,
++        has_ramp=has_ramp,
++        has_temp_control=has_temp_control,
++    )
++    return capacity_store.save_profile(capacity)
++
++
++def get_equipment_capacity_profile(equipment_id: str) -> dict | None:
++    from dispatch import capacity_store
++
++    return capacity_store.get_profile_row(equipment_id)
++
++
++def capacity_coverage() -> dict:
++    """Which trucks can be assessed at all. UNCONFIGURED is a fact, not a gap."""
++    from dispatch import capacity_store
++
++    return capacity_store.profile_coverage()
++
++
++def assess_load_capacity(load_id: str) -> dict:
++    """Does this load fit the truck it is assigned to?
++
++    Advisory and non-mutating, exactly as `scoring.assess_capacity` promises: it
++    reserves nothing and records nothing. A load with no equipment assigned, or
++    a truck with no profile on file, is UNCONFIGURED -- never "probably fine".
++    Inventing a specification is how freight gets accepted onto a trailer that
++    cannot carry it.
++    """
++    from dispatch import capacity_store, scoring
++
++    load = store.get_load(load_id)
++    if not load:
++        raise ValueError(f"Load not found: {load_id}")
++
++    equipment_id = load.get("equipment_id") or ""
++    if not equipment_id:
++        return {
++            "status": "UNCONFIGURED",
++            "reason": "No truck is assigned to this load, so there is nothing to assess it against.",
++            "load_id": load_id,
++            "assessment": None,
++        }
++
++    capacity = capacity_store.load_capacity(equipment_id, driver_id=load.get("driver_id", ""))
++    if capacity is None:
++        return {
++            "status": "UNCONFIGURED",
++            "reason": (
++                f"Truck {equipment_id} has no capacity profile on file. "
++                "Record what it can carry on the equipment page before Dispatch can "
++                "say whether a load fits it."
++            ),
++            "load_id": load_id,
++            "equipment_id": equipment_id,
++            "assessment": None,
++        }
++
++    assessment = scoring.assess_capacity(load, capacity)
++    return {
++        "status": "LIVE",
++        "load_id": load_id,
++        "equipment_id": equipment_id,
++        "assessment": assessment.to_dict() if hasattr(assessment, "to_dict") else assessment,
++    }
+diff --git a/dispatch/timestamps.py b/dispatch/timestamps.py
+new file mode 100644
+index 0000000..abdff41
+--- /dev/null
++++ b/dispatch/timestamps.py
+@@ -0,0 +1,228 @@
++"""An appointment time that is not ambiguous, from an operator who typed one.
++
++Found while wiring the capacity engine into production, and it is the reason
++wiring it would otherwise have made every load unassessable.
++
++`dispatch/capacity.py::parse_operational_timestamp` is right about the hard part:
++
++    "A naive timestamp is rejected rather than assumed to be UTC -- a pickup
++    window in an unstated zone is genuinely ambiguous, and guessing costs a load."
++
++It returns TIMESTAMP_NAIVE for a value with no offset, and the caller raises a
++**SEVERITY_BLOCKING** finding. Meanwhile the load form's own placeholder is
++`YYYY-MM-DD HH:MM` -- a naive timestamp. So every load entered through the
++portal in the documented format produces a blocking capacity finding, and Mike
++would have concluded the capacity engine refuses everything rather than that the
++input format and the engine disagree.
++
++There is a second, quieter consequence of the same gap.
++`services.get_load_calendar()` selects a month by string prefix -- `p[:7] ==
++"2026-09"` -- on a free-text field. Type `9/14/2026 08:00`, which is the format a
++US dispatcher writes by hand and which the `type="text"` input accepts without
++complaint, and the load simply is not on the calendar. No error, no warning, no
++row. Silent omission from the one view that is supposed to show everything.
++
++So this module does the one thing that resolves both without weakening the
++engine's rule: it makes the *stored* value unambiguous at the moment of entry.
++
++**The operator's zone is configuration, not a guess.** `DISPATCH_OPERATING_TIMEZONE`
++names it, and the normaliser attaches it to a value the operator typed without
++one -- which is not guessing, it is recording what they meant, because a
++dispatcher typing `08:00` means eight in the morning where they are. Attaching
++UTC would be the guess. A value that already carries an offset is left exactly
++as it is.
++
++**What cannot be parsed is kept, not discarded.** The raw text is stored
++unchanged and reported as UNVERIFIED. Rewriting or dropping a value somebody
++typed because this module could not read it would be worse than the ambiguity.
++"""
++
++from __future__ import annotations
++
++import os
++import re
++from datetime import datetime, timezone
++from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
++
++#: Where Level 1 Transport operates. An owner-operator types local time, so this
++#: is what a bare "08:00" means. Configurable because the business can move and
++#: because a second operator in another zone is a real possibility.
++DEFAULT_TIMEZONE = "America/New_York"
++
++#: Outcomes, in the fixed truth vocabulary where one fits.
++NORMALIZED = "NORMALIZED"      #: an unambiguous instant, offset carried
++ALREADY_OFFSET = "ALREADY_OFFSET"
++MISSING = "MISSING"
++UNVERIFIED = "UNVERIFIED"      #: kept verbatim; this module could not read it
++
++#: Formats an operator plausibly types, most explicit first. Every one of them
++#: is naive -- that is the point; the zone comes from configuration, not from
++#: the string.
++_NAIVE_FORMATS = (
++    "%Y-%m-%dT%H:%M:%S",
++    "%Y-%m-%dT%H:%M",
++    "%Y-%m-%d %H:%M:%S",
++    "%Y-%m-%d %H:%M",
++    "%Y-%m-%d",
++    "%m/%d/%Y %H:%M",
++    "%m/%d/%Y %I:%M %p",
++    "%m/%d/%Y",
++    "%m/%d/%y %H:%M",
++    "%m/%d/%y %I:%M %p",
++    "%m/%d/%y",
++)
++
++_COMPACT_MERIDIEM = re.compile(r"^(.*\d)\s*([AaPp])\.?[Mm]\.?$")
++
++
++def operating_timezone() -> ZoneInfo:
++    """The zone a bare time is in. Falls back to UTC, and says so by returning it.
++
++    A missing tzdata is a deployment fact, not a reason to refuse to start: the
++    fallback keeps every timestamp unambiguous (UTC is an offset) at the cost of
++    being wrong about which hour, which `timezone_name()` makes visible so a
++    screen can say it rather than a load quietly moving four hours.
++    """
++    name = os.environ.get("DISPATCH_OPERATING_TIMEZONE", DEFAULT_TIMEZONE).strip()
++    try:
++        return ZoneInfo(name)
++    except (ZoneInfoNotFoundError, ValueError, KeyError):
++        return ZoneInfo("UTC") if _utc_available() else timezone.utc  # type: ignore[return-value]
++
++
++def _utc_available() -> bool:
++    try:
++        ZoneInfo("UTC")
++        return True
++    except Exception:  # noqa: BLE001
++        return False
++
++
++def timezone_name() -> str:
++    configured = os.environ.get("DISPATCH_OPERATING_TIMEZONE", DEFAULT_TIMEZONE).strip()
++    zone = operating_timezone()
++    actual = getattr(zone, "key", "UTC")
++    return actual if actual == configured else f"{actual} (requested {configured}, unavailable)"
++
++
++def normalize(value: str | None) -> dict:
++    """Turn what an operator typed into an instant that cannot be misread.
++
++    Returns `{"value", "status", "note", "instant"}`. `value` is what to store:
++    an ISO-8601 string carrying an offset when the input could be read, and the
++    original text unchanged when it could not.
++    """
++    if value is None:
++        return {"value": "", "status": MISSING, "note": "", "instant": None}
++    text = str(value).strip()
++    if not text:
++        return {"value": "", "status": MISSING, "note": "", "instant": None}
++
++    # Already unambiguous. Left alone -- re-deriving an offset somebody supplied
++    # is how a correct value gets changed.
++    explicit = _parse_with_offset(text)
++    if explicit is not None:
++        # Returned verbatim, not re-serialised. "2026-09-14T08:00:00Z" and
++        # "2026-09-14T08:00:00+00:00" are the same instant, and rewriting one
++        # into the other changes a value that was already correct -- which is
++        # both pointless and, for anything comparing stored strings, a change.
++        return {
++            "value": text,
++            "status": ALREADY_OFFSET,
++            "note": "",
++            "instant": explicit,
++        }
++
++    naive = _parse_naive(text)
++    if naive is None:
++        return {
++            "value": text,
++            "status": UNVERIFIED,
++            "note": (
++                f"Dispatch could not read {text!r} as a date and time, so it is stored "
++                "exactly as typed. It will not appear on the calendar and cannot be "
++                "used to judge whether a truck can make an appointment."
++            ),
++            "instant": None,
++        }
++
++    zone = operating_timezone()
++    localised = naive.replace(tzinfo=zone)
++    return {
++        "value": _iso(localised),
++        "status": NORMALIZED,
++        "note": f"Read as {timezone_name()} local time.",
++        "instant": localised,
++    }
++
++
++def _parse_with_offset(text: str) -> datetime | None:
++    candidate = text[:-1] + "+00:00" if text.endswith(("Z", "z")) else text
++    try:
++        parsed = datetime.fromisoformat(candidate)
++    except ValueError:
++        return None
++    return parsed if parsed.tzinfo is not None else None
++
++
++def _parse_naive(text: str) -> datetime | None:
++    # "8:00PM" and "8:00 p.m." are the same appointment; strptime only reads one.
++    match = _COMPACT_MERIDIEM.match(text)
++    if match:
++        text = f"{match.group(1)} {match.group(2).upper()}M"
++    for fmt in _NAIVE_FORMATS:
++        try:
++            return datetime.strptime(text, fmt)
++        except ValueError:
++            continue
++    try:
++        parsed = datetime.fromisoformat(text)
++    except ValueError:
++        return None
++    return parsed if parsed.tzinfo is None else None
++
++
++def _iso(moment: datetime) -> str:
++    return moment.isoformat(timespec="seconds")
++
++
++def to_utc(value: str | None) -> datetime | None:
++    """The instant, in UTC, or None when the value is unusable."""
++    result = normalize(value)
++    instant = result["instant"]
++    return instant.astimezone(timezone.utc) if instant else None
++
++
++def local_date(value: str | None) -> str:
++    """The calendar day this appointment falls on, where the operator is.
++
++    `get_load_calendar()` used to take `value[:10]`, which is the day in
++    whatever zone the string happened to be written in -- so a delivery at
++    `2026-09-15T01:00:00Z` showed on the 15th when for a dispatcher in Eastern
++    time it is the evening of the 14th.
++    """
++    instant = normalize(value)["instant"]
++    if instant is None:
++        return ""
++    return instant.astimezone(operating_timezone()).strftime("%Y-%m-%d")
++
++
++def local_month(value: str | None) -> str:
++    day = local_date(value)
++    return day[:7] if day else ""
++
++
++def describe(value: str | None) -> str:
++    """What to show a person: local time, with the zone named.
++
++    Every timestamp in this program is rendered raw -- `2026-09-12T17:04:00Z` --
++    to a dispatcher and, through the stakeholder view, to a broker. UTC on a
++    screen is a 70 MPH failure: the driver has to do arithmetic to find out when
++    the appointment is.
++    """
++    result = normalize(value)
++    instant = result["instant"]
++    if instant is None:
++        return str(value or "")
++    local = instant.astimezone(operating_timezone())
++    return local.strftime("%a %d %b %Y, %H:%M ") + (local.tzname() or "")
+diff --git a/portal/app.py b/portal/app.py
+index 4dfa6f0..a5e0e72 100644
+--- a/portal/app.py
++++ b/portal/app.py
+@@ -25,6 +25,27 @@ from portal import errors
+ from portal.routes import register_routes
+ 
+ 
++def _register_time_filters(app: Flask) -> None:
++    """`{{ value|local_time }}` — an appointment a person can read at a glance.
++
++    Every timestamp in this program was rendered raw: 2026-08-12T14:00:00-04:00
++    on a rate confirmation a broker receives, and on the driver's own screen.
++    That is a 70 MPH failure (DRIVER_FIRST_DOCTRINE_v2 D2) -- the driver is
++    moving, tired, and has one hand, and an ISO string makes them do arithmetic
++    to find out when the appointment is.
++
++    The filter renders the operator's local time with the zone named, so it is
++    unambiguous without being machine-shaped. A value that cannot be read is
++    printed exactly as typed rather than blanked: somebody wrote it for a
++    reason.
++    """
++    from dispatch import timestamps
++
++    app.jinja_env.filters["local_time"] = timestamps.describe
++    app.jinja_env.filters["local_date"] = timestamps.local_date
++    app.jinja_env.globals["operating_timezone"] = timestamps.timezone_name
++
++
+ def create_app(config: dict | None = None) -> Flask:
+     app = Flask(
+         __name__,
+@@ -45,6 +66,7 @@ def create_app(config: dict | None = None) -> Flask:
+         check_secrets()
+     register_routes(app)
+     init_csrf(app)
++    _register_time_filters(app)
+ 
+     @app.before_request
+     def _require_authority_login():
+diff --git a/portal/models/conflict.py b/portal/models/conflict.py
+index e8a74bc..86dc0ae 100644
+--- a/portal/models/conflict.py
++++ b/portal/models/conflict.py
+@@ -266,17 +266,24 @@ def _parse_window_end(window: str):
+ 
+ 
+ def _parse_datetime(dt_str: str):
+-    """Best-effort parse of a datetime string."""
++    """The instant, in UTC, or None when it cannot be read.
++
++    This was a fourth hand-rolled datetime parser with its own format list, and
++    none of the formats carried an offset -- so as soon as appointment times
++    started being stored unambiguously (dispatch/timestamps.py) every one of
++    them parsed as None and conflict detection silently stopped finding
++    anything. A detector that quietly returns "no conflicts" is worse than one
++    that is absent.
++
++    Delegating to dispatch.timestamps means one parser, one answer, and
++    comparisons in UTC -- comparing a naive 06:00 against an aware 06:00-04:00
++    is how an overlap gets missed by four hours.
++    """
+     if not dt_str:
+         return None
+-    from datetime import datetime as dt_cls
+-    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S",
+-                "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+-        try:
+-            return dt_cls.strptime(dt_str.strip(), fmt)
+-        except ValueError:
+-            continue
+-    return None
++    from dispatch.timestamps import to_utc
++
++    return to_utc(dt_str)
+ 
+ 
+ def _windows_overlap(start_a, end_a, start_b, end_b) -> bool:
+diff --git a/portal/routes/dispatch_api.py b/portal/routes/dispatch_api.py
+index a4246d2..db8484d 100644
+--- a/portal/routes/dispatch_api.py
++++ b/portal/routes/dispatch_api.py
+@@ -222,6 +222,74 @@ def notify_stalled():
+ 
+ # ── Visibility ────────────────────────────────────────────────────────
+ 
++@dispatch_bp.route("/loads/<load_id>/capacity", methods=["GET"])
++def load_capacity(load_id):
++    """Whether this load fits the truck it is assigned to.
++
++    Advisory. It reserves nothing, records nothing, and returns UNCONFIGURED --
++    never a guess -- when there is no truck or no profile for it.
++    """
++    try:
++        result = services.assess_load_capacity(load_id)
++    except ValueError as exc:
++        return jsonify({"error": str(exc)}), 404
++    # Nested, not merged: the assessment carries its own `status` in the truth
++    # vocabulary and spreading it here would overwrite the envelope's "ok" with
++    # "UNCONFIGURED" -- two different questions answered by one key.
++    return jsonify({"status": "ok", "capacity": result})
++
++
++@dispatch_bp.route("/equipment/<equipment_id>/capacity", methods=["GET"])
++def get_equipment_capacity(equipment_id):
++    profile = services.get_equipment_capacity_profile(equipment_id)
++    if not profile:
++        return jsonify({
++            "status": "ok", "profile": None, "capacity_status": "UNCONFIGURED",
++            "detail": "No capacity profile is on file for this truck.",
++        })
++    return jsonify({"status": "ok", "profile": profile, "capacity_status": "CONFIGURED"})
++
++
++@dispatch_bp.route("/equipment/<equipment_id>/capacity", methods=["PUT"])
++def set_equipment_capacity(equipment_id):
++    """Record what this truck can carry.
++
++    `source` is required and `verified_by` is not defaulted: the engine refuses
++    to manufacture a verification, and a specification nobody signed for is
++    CONFIGURED rather than VERIFIED.
++    """
++    data = _json_body()
++    source = (data.get("source") or "").strip()
++    if not source:
++        return jsonify({
++            "error": "source is required -- where this specification came from "
++                     "(a spec sheet, a door sticker, a scale ticket)"
++        }), 400
++    try:
++        profile = services.set_equipment_capacity_profile(
++            equipment_id,
++            max_weight_lbs=float(data.get("max_weight_lbs") or 0),
++            max_volume_cuft=float(data.get("max_volume_cuft") or 0),
++            max_linear_feet=float(data.get("max_linear_feet") or 0),
++            max_pallets=int(data.get("max_pallets") or 0),
++            equipment_type=data.get("equipment_type") or "dry_van",
++            source=source,
++            verified_by=(data.get("verified_by") or None),
++            has_liftgate=bool(data.get("has_liftgate")),
++            has_ramp=bool(data.get("has_ramp")),
++            has_temp_control=bool(data.get("has_temp_control")),
++        )
++    except ValueError as exc:
++        return jsonify({"error": str(exc)}), 400
++    return jsonify({"status": "ok", "profile": profile})
++
++
++@dispatch_bp.route("/capacity/coverage", methods=["GET"])
++def capacity_coverage():
++    """How many trucks can be assessed. A gap stated is a gap somebody can close."""
++    return jsonify({"status": "ok", "coverage": services.capacity_coverage()})
++
++
+ @dispatch_bp.route("/loads/<load_id>/visibility", methods=["GET"])
+ def get_visibility(load_id):
+     vis = services.get_visibility(load_id)
+diff --git a/portal/routes/pages.py b/portal/routes/pages.py
+index 6b5cd37..b01b179 100644
+--- a/portal/routes/pages.py
++++ b/portal/routes/pages.py
+@@ -206,9 +206,15 @@ def dispatch_detail(load_id):
+     stakeholder_url = url_for(
+         "stakeholder.stakeholder_view", load_id=load_id, token=stakeholder_token, _external=True
+     )
++    # Does this load fit the truck it is on? Advisory, non-mutating, and
++    # UNCONFIGURED rather than silent when the truck has no profile on file --
++    # the capacity engine was unreachable from any screen until now.
++    capacity_view = dispatch_svc.assess_load_capacity(load_id)
++
+     return render_template(
+         "dispatch_detail.html",
+         stakeholder_url=stakeholder_url,
++        capacity_view=capacity_view,
+         load_statuses=LOAD_STATUSES,
+         milestone_types=MILESTONE_TYPES,
+         milestone_sources=MILESTONE_SOURCES,
+diff --git a/portal/templates/dispatch.html b/portal/templates/dispatch.html
+index 5899251..9a4c9d2 100644
+--- a/portal/templates/dispatch.html
++++ b/portal/templates/dispatch.html
+@@ -91,9 +91,9 @@
+             <div><label><strong>Delivery Location</strong><br>
+                 <input type="text" name="delivery_location" style="width:100%;padding:4px 8px;"></label></div>
+             <div><label><strong>Pickup Date/Time</strong><br>
+-                <input type="text" name="pickup_datetime" placeholder="YYYY-MM-DD HH:MM" style="width:100%;padding:4px 8px;"></label></div>
++                <input type="text" name="pickup_datetime" placeholder="YYYY-MM-DD HH:MM ({{ operating_timezone() }})" style="width:100%;padding:4px 8px;"></label></div>
+             <div><label><strong>Delivery Date/Time</strong><br>
+-                <input type="text" name="delivery_datetime" placeholder="YYYY-MM-DD HH:MM" style="width:100%;padding:4px 8px;"></label></div>
++                <input type="text" name="delivery_datetime" placeholder="YYYY-MM-DD HH:MM ({{ operating_timezone() }})" style="width:100%;padding:4px 8px;"></label></div>
+             <div><label><strong>Equipment</strong><br>
+                 <input type="text" name="equipment" style="width:100%;padding:4px 8px;"></label></div>
+             <div><label><strong>Driver</strong><br>
+diff --git a/portal/templates/dispatch_detail.html b/portal/templates/dispatch_detail.html
+index 613ff83..1c1134c 100644
+--- a/portal/templates/dispatch_detail.html
++++ b/portal/templates/dispatch_detail.html
+@@ -55,8 +55,35 @@
+             <div><strong>Broker / Shipper:</strong> {{ load.broker_shipper or '—' }}</div>
+             <div><strong>Pickup Location:</strong> {{ load.pickup_location or '—' }}</div>
+             <div><strong>Delivery Location:</strong> {{ load.delivery_location or '—' }}</div>
+-            <div><strong>Pickup Time:</strong> {{ load.pickup_datetime or '—' }}</div>
+-            <div><strong>Delivery Time:</strong> {{ load.delivery_datetime or '—' }}</div>
++            <div><strong>Pickup Time:</strong> {{ load.pickup_datetime|local_time or '—' }}</div>
++        </div>
++        <div class="card-section" id="capacity-assessment">
++            <h3>Does this load fit the truck?</h3>
++            {% if capacity_view.status != 'LIVE' %}
++                <p><span class="truth truth-unconfigured">UNCONFIGURED</span>
++                   {{ capacity_view.reason }}</p>
++            {% else %}
++                {% set a = capacity_view.assessment %}
++                <p><span class="truth truth-live">LIVE</span>
++                   Assessed against truck {{ capacity_view.equipment_id }}.
++                   <strong>{{ a.status }}</strong></p>
++                {% if a.findings %}
++                <ul>
++                    {% for f in a.findings %}
++                    <li><strong>{{ f.severity }}</strong> · {{ f.dimension }} — {{ f.message }}
++                        {% if f.requires_human_review %}<em>(needs a person)</em>{% endif %}
++                    </li>
++                    {% endfor %}
++                </ul>
++                {% else %}
++                <p>No capacity findings.</p>
++                {% endif %}
++                <p class="muted">Advisory only. Nothing is reserved and nothing is recorded
++                   by looking at this.</p>
++            {% endif %}
++        </div>
++        <div>
++            <div><strong>Delivery Time:</strong> {{ load.delivery_datetime|local_time or '—' }}</div>
+             <div><strong>Equipment:</strong> {{ load.equipment or '—' }}</div>
+             <div><strong>Driver:</strong> {{ load.driver or '—' }}</div>
+             <div><strong>Driver ID:</strong> {{ load.driver_id or '—' }}</div>
+@@ -88,9 +115,9 @@
+                 <div><label><strong>Delivery Location</strong><br>
+                     <input type="text" name="delivery_location" value="{{ load.delivery_location or '' }}" style="width:100%;padding:4px 8px;"></label></div>
+                 <div><label><strong>Pickup Time</strong><br>
+-                    <input type="text" name="pickup_datetime" value="{{ load.pickup_datetime or '' }}" placeholder="YYYY-MM-DD HH:MM" style="width:100%;padding:4px 8px;"></label></div>
++                    <input type="text" name="pickup_datetime" value="{{ load.pickup_datetime or '' }}" placeholder="YYYY-MM-DD HH:MM ({{ operating_timezone() }})" style="width:100%;padding:4px 8px;"></label></div>
+                 <div><label><strong>Delivery Time</strong><br>
+-                    <input type="text" name="delivery_datetime" value="{{ load.delivery_datetime or '' }}" placeholder="YYYY-MM-DD HH:MM" style="width:100%;padding:4px 8px;"></label></div>
++                    <input type="text" name="delivery_datetime" value="{{ load.delivery_datetime or '' }}" placeholder="YYYY-MM-DD HH:MM ({{ operating_timezone() }})" style="width:100%;padding:4px 8px;"></label></div>
+                 <div><label><strong>Source</strong><br>
+                     <select name="source" style="width:100%;padding:4px 8px;">
+                         <option value="">— None —</option>
+diff --git a/portal/templates/driver_home.html b/portal/templates/driver_home.html
+index 45ae4e9..c95ce03 100644
+--- a/portal/templates/driver_home.html
++++ b/portal/templates/driver_home.html
+@@ -102,7 +102,7 @@
+ 
+     <table>
+         <tr><td class="label">Customer</td><td><strong>{{ active_card.load.customer or '—' }}</strong></td></tr>
+-        <tr><td class="label">Pickup Window</td><td>{{ active_card.load.pickup_datetime or '—' }}</td></tr>
++        <tr><td class="label">Pickup Window</td><td>{{ active_card.load.pickup_datetime|local_time or '—' }}</td></tr>
+         <tr><td class="label">Delivery Window</td><td>{{ active_card.load.delivery_datetime or '—' }}</td></tr>
+         <tr><td class="label">Next Milestone</td><td><strong>{{ active_card.mission_visibility.next_expected_milestone or '—' }}</strong></td></tr>
+         <tr><td class="label">Route Risk</td><td>{{ active_card.route_risk.summary }}</td></tr>
+@@ -282,7 +282,7 @@
+             </h3>
+             <table>
+                 <tr><td class="label">Customer</td><td>{{ lc.load.customer or '—' }}</td></tr>
+-                <tr><td class="label">Pickup</td><td>{{ lc.load.pickup_datetime or '—' }}</td></tr>
++                <tr><td class="label">Pickup</td><td>{{ lc.load.pickup_datetime|local_time or '—' }}</td></tr>
+                 <tr><td class="label">Delivery</td><td>{{ lc.load.delivery_datetime or '—' }}</td></tr>
+                 <tr><td class="label">Communications (COMI)</td><td>{{ lc.comi_status }}</td></tr>
+                 <tr><td class="label">Next Expected</td><td>{{ lc.mission_visibility.next_expected_milestone or '—' }}</td></tr>
+diff --git a/portal/templates/load_readonly_detail.html b/portal/templates/load_readonly_detail.html
+index 28dbc53..a6fbdc4 100644
+--- a/portal/templates/load_readonly_detail.html
++++ b/portal/templates/load_readonly_detail.html
+@@ -36,7 +36,7 @@
+         <div><strong>Broker / Shipper:</strong> {{ load.broker_shipper or '—' }}</div>
+         <div><strong>Pickup Location:</strong> {{ load.pickup_location or '—' }}</div>
+         <div><strong>Delivery Location:</strong> {{ load.delivery_location or '—' }}</div>
+-        <div><strong>Pickup Time:</strong> {{ load.pickup_datetime or '—' }}</div>
++        <div><strong>Pickup Time:</strong> {{ load.pickup_datetime|local_time or '—' }}</div>
+         <div><strong>Delivery Time:</strong> {{ load.delivery_datetime or '—' }}</div>
+         <div><strong>Equipment:</strong> {{ load.equipment or '—' }}</div>
+         <div><strong>Driver:</strong> {{ load.driver or '—' }}</div>
+diff --git a/portal/templates/rate_confirmation_print.html b/portal/templates/rate_confirmation_print.html
+index 369e49c..d6df033 100644
+--- a/portal/templates/rate_confirmation_print.html
++++ b/portal/templates/rate_confirmation_print.html
+@@ -80,8 +80,8 @@
+             <div class="info-item"><span class="info-label">Broker / Shipper</span><span class="info-value">{{ load.broker_shipper or '—' }}</span></div>
+             <div class="info-item"><span class="info-label">Pickup Location</span><span class="info-value">{{ load.pickup_location or '—' }}</span></div>
+             <div class="info-item"><span class="info-label">Delivery Location</span><span class="info-value">{{ load.delivery_location or '—' }}</span></div>
+-            <div class="info-item"><span class="info-label">Pickup Date/Time</span><span class="info-value">{{ load.pickup_datetime or '—' }}</span></div>
+-            <div class="info-item"><span class="info-label">Delivery Date/Time</span><span class="info-value">{{ load.delivery_datetime or '—' }}</span></div>
++            <div class="info-item"><span class="info-label">Pickup Date/Time</span><span class="info-value">{{ load.pickup_datetime|local_time or '—' }}</span></div>
++            <div class="info-item"><span class="info-label">Delivery Date/Time</span><span class="info-value">{{ load.delivery_datetime|local_time or '—' }}</span></div>
+             <div class="info-item"><span class="info-label">Equipment Type</span><span class="info-value">{{ load.equipment or '—' }}</span></div>
+             {% if assigned_driver %}
+             <div class="info-item"><span class="info-label">Driver</span><span class="info-value">{{ assigned_driver.name }}</span></div>
+diff --git a/portal/templates/stakeholder_view.html b/portal/templates/stakeholder_view.html
+index 9be85b1..50e2979 100644
+--- a/portal/templates/stakeholder_view.html
++++ b/portal/templates/stakeholder_view.html
+@@ -50,7 +50,7 @@
+             <tr><td class="label">Status</td><td><span class="status-tag">{{ load.status.replace('_', ' ').title() }}</span></td></tr>
+             <tr><td class="label">Customer</td><td>{{ load.customer or '—' }}</td></tr>
+             <tr><td class="label">Broker / Shipper</td><td>{{ load.broker_shipper or '—' }}</td></tr>
+-            <tr><td class="label">Pickup</td><td>{{ load.pickup_location or '—' }}{% if load.pickup_datetime %} &middot; {{ load.pickup_datetime }}{% endif %}</td></tr>
++            <tr><td class="label">Pickup</td><td>{{ load.pickup_location or '—' }}{% if load.pickup_datetime %} &middot; {{ load.pickup_datetime|local_time }}{% endif %}</td></tr>
+             <tr><td class="label">Delivery</td><td>{{ load.delivery_location or '—' }}{% if load.delivery_datetime %} &middot; {{ load.delivery_datetime }}{% endif %}</td></tr>
+             <tr><td class="label">Equipment</td><td>{% if assigned_equipment %}{{ assigned_equipment.unit_number }} ({{ assigned_equipment.equipment_type.replace('_', ' ').title() }}){% else %}—{% endif %}</td></tr>
+             <tr><td class="label">Driver</td><td>{% if assigned_driver %}{{ assigned_driver.name }}{% else %}Not yet assigned{% endif %}</td></tr>
+diff --git a/tests/test_booking.py b/tests/test_booking.py
+index 3a1e14a..7b9f2f9 100644
+--- a/tests/test_booking.py
++++ b/tests/test_booking.py
+@@ -137,8 +137,16 @@ class TestBookAction:
+         assert load["pickup_location"] == "Jacksonville, FL 32202"
+         assert load["delivery_location"] == "Savannah, GA 31401"
+         assert load["equipment"] == "Dry Van 53'"
+-        assert "2026-07-30 06:00" in load["pickup_datetime"]
+-        assert "2026-07-30 14:00" in load["delivery_datetime"]
++        # Stored with the operator's offset attached rather than as the bare
++        # text that was typed. A naive "2026-07-30 06:00" is ambiguous -- the
++        # capacity engine refuses it outright and the calendar could not place
++        # it -- so create_load() now records which 06:00 was meant. The
++        # appointment is unchanged; only the ambiguity is gone.
++        from dispatch.timestamps import to_utc
++
++        assert to_utc(load["pickup_datetime"]) == to_utc("2026-07-30 06:00")
++        assert to_utc(load["delivery_datetime"]) == to_utc("2026-07-30 14:00")
++        assert "2026-07-30T06:00" in load["pickup_datetime"]
+ 
+     def test_book_includes_notes(self, client, dispatch_entry):
+         resp = client.post("/api/action", json={
+@@ -401,23 +409,39 @@ class TestBookingConflicts:
+ 
+ 
+ class TestConflictDetectionUnit:
++    """These parsers now return an instant in UTC rather than a naive local hour.
++
++    They used to return whatever hour the string happened to say, with no zone,
++    and were then compared against load timestamps parsed the same way -- which
++    works only for as long as every value in the comparison is written in the
++    same unstated zone. Overlap detection is arithmetic on instants; doing it on
++    naive local times is how a conflict is missed by four hours. So the
++    assertions below check the instant, not the digits.
++    """
++
+     def test_parse_window_start(self):
++        from dispatch.timestamps import to_utc
+         from portal.models.conflict import _parse_window_start
++
+         result = _parse_window_start("2026-07-30 06:00 - 10:00")
+         assert result is not None
+-        assert result.hour == 6
++        assert result == to_utc("2026-07-30 06:00")
+ 
+     def test_parse_window_end_short(self):
++        from dispatch.timestamps import to_utc
+         from portal.models.conflict import _parse_window_end
++
+         result = _parse_window_end("2026-07-30 06:00 - 10:00")
+         assert result is not None
+-        assert result.hour == 10
++        assert result == to_utc("2026-07-30 10:00")
+ 
+     def test_parse_window_end_full(self):
++        from dispatch.timestamps import to_utc
+         from portal.models.conflict import _parse_window_end
++
+         result = _parse_window_end("2026-07-30 06:00 - 2026-07-30 18:00")
+         assert result is not None
+-        assert result.hour == 18
++        assert result == to_utc("2026-07-30 18:00")
+ 
+     def test_parse_window_empty(self):
+         from portal.models.conflict import _parse_window_start, _parse_window_end
+diff --git a/tests/test_capacity_is_reachable.py b/tests/test_capacity_is_reachable.py
+new file mode 100644
+index 0000000..0051188
+--- /dev/null
++++ b/tests/test_capacity_is_reachable.py
+@@ -0,0 +1,259 @@
++"""The capacity engine is reachable from the running program, and stays that way.
++
++`dispatch/capacity.py` is 1,861 lines with 1,000 lines of tests against it, and
++none of it could be reached:
++
++  * `DynamicCapacity(` appeared nowhere outside `tests/`;
++  * no table existed for a profile to be stored in;
++  * the one production call into scoring is `portal/helpers.py` ->
++    `score_load(data)` with no `capacity`, and `score_load`'s own docstring says
++    that without one "the result is exactly what it has always been".
++
++Dead code that is *well tested* is the hard case. It raised the gated coverage
++figure while evaluating nothing, and a reviewer reading `test_dynamic_capacity.py`
++would conclude the capability was in service.
++
++The first class below is a drift test in the sense `test_repository_doctrine.py`
++means it: it reads the source tree and fails if the engine goes back to having no
++production caller. A resolved middle state that nothing guards is a middle state
++waiting to come back.
++"""
++
++from __future__ import annotations
++
++import ast
++from pathlib import Path
++
++import pytest
++
++from dispatch import capacity_store, services
++from dispatch.db import set_db_path
++
++REPO_ROOT = Path(__file__).resolve().parent.parent
++PRODUCTION_DIRS = ("dispatch", "portal", "cin_lite", "dispatch_launcher", "scripts")
++
++
++def _production_sources() -> list[Path]:
++    files: list[Path] = []
++    for directory in PRODUCTION_DIRS:
++        root = REPO_ROOT / directory
++        if root.is_dir():
++            files.extend(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
++    return files
++
++
++class TestItIsNotDeadCode:
++    def test_dynamic_capacity_is_instantiated_outside_the_test_suite(self):
++        constructing = []
++        for path in _production_sources():
++            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
++            for node in ast.walk(tree):
++                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
++                    if node.func.id == "DynamicCapacity":
++                        constructing.append(str(path.relative_to(REPO_ROOT)))
++        assert constructing, (
++            "DynamicCapacity is constructed nowhere outside tests/. The engine is "
++            "1,861 lines and its coverage comes entirely from a test file, which is "
++            "how dead code reads as a working capability."
++        )
++
++    def test_a_table_exists_for_a_profile_to_live_in(self, tmp_path):
++        set_db_path(tmp_path / "dispatch.db")
++        try:
++            from dispatch.db import get_connection
++
++            with get_connection() as conn:
++                conn.execute("SELECT COUNT(*) FROM capacity_profiles").fetchone()
++        finally:
++            set_db_path(None)
++
++    def test_something_a_route_reaches_calls_the_engine(self):
++        """`assess_load_capacity` must be called from a portal route, not only
++        defined for one."""
++        callers = []
++        for path in _production_sources():
++            if "portal" not in path.parts:
++                continue
++            text = path.read_text(encoding="utf-8")
++            if "assess_load_capacity" in text:
++                callers.append(str(path.relative_to(REPO_ROOT)))
++        assert callers, "no portal route reaches the capacity engine"
++
++
++@pytest.fixture
++def fleet(tmp_path):
++    set_db_path(tmp_path / "dispatch.db")
++    try:
++        equipment = services.create_equipment(unit_number="T-101", equipment_type="dry_van")
++        yield equipment
++    finally:
++        set_db_path(None)
++
++
++class TestTheProfile:
++    def test_a_truck_with_no_profile_is_unconfigured_not_assumed(self, fleet):
++        load = services.create_load(customer="Acme")
++        services.assign_equipment(load["load_id"], fleet["equipment_id"])
++
++        result = services.assess_load_capacity(load["load_id"])
++
++        assert result["status"] == "UNCONFIGURED"
++        assert "no capacity profile" in result["reason"]
++        # Assuming a 53-foot dry van is how freight gets accepted onto a trailer
++        # that cannot carry it.
++        assert result["assessment"] is None
++
++    def test_a_load_with_no_truck_is_unconfigured(self, fleet):
++        load = services.create_load(customer="Acme")
++        result = services.assess_load_capacity(load["load_id"])
++        assert result["status"] == "UNCONFIGURED"
++        assert "No truck is assigned" in result["reason"]
++
++    def test_a_profiled_truck_is_assessed(self, fleet):
++        services.set_equipment_capacity_profile(
++            fleet["equipment_id"], max_weight_lbs=44000, max_linear_feet=53,
++            source="door sticker", verified_by="Mike",
++        )
++        load = services.create_load(customer="Acme")
++        services.assign_equipment(load["load_id"], fleet["equipment_id"])
++
++        result = services.assess_load_capacity(load["load_id"])
++
++        assert result["status"] == "LIVE"
++        assert result["assessment"]["capacity_id"]
++
++    def test_a_profile_survives_a_round_trip(self, fleet):
++        services.set_equipment_capacity_profile(
++            fleet["equipment_id"], max_weight_lbs=44000, max_volume_cuft=3800,
++            max_linear_feet=53, max_pallets=26, source="spec sheet", verified_by="Mike",
++            has_liftgate=True,
++        )
++        capacity = capacity_store.load_capacity(fleet["equipment_id"])
++        assert capacity.physical.max_weight_lbs == 44000
++        assert capacity.physical.max_pallets == 26
++        assert capacity.physical.has_liftgate is True
++        assert capacity.physical.configuration_verified_by == "Mike"
++
++    def test_utilization_is_not_persisted(self, fleet):
++        """used_* describes what is on the trailer now. A saved one would come
++        back as a claim about today made from last week's freight."""
++        services.set_equipment_capacity_profile(
++            fleet["equipment_id"], max_weight_lbs=44000, source="spec", verified_by="Mike",
++        )
++        capacity = capacity_store.load_capacity(fleet["equipment_id"])
++        capacity.physical.used_weight_lbs = 18000
++        capacity_store.save_profile(capacity)
++
++        reloaded = capacity_store.load_capacity(fleet["equipment_id"])
++        assert reloaded.physical.used_weight_lbs == 0
++
++    def test_a_specification_nobody_signed_for_is_not_verified(self, fleet):
++        services.set_equipment_capacity_profile(
++            fleet["equipment_id"], max_weight_lbs=44000, source="a guess",
++        )
++        capacity = capacity_store.load_capacity(fleet["equipment_id"])
++        assert capacity.physical.configuration_verified_by is None
++        assert capacity.physical.configuration_status != "VERIFIED"
++
++    def test_an_unknown_truck_is_refused(self, fleet):
++        with pytest.raises(ValueError, match="Equipment not found"):
++            services.set_equipment_capacity_profile(
++                "EQP-NOPE", max_weight_lbs=1, source="x",
++            )
++
++    def test_a_profile_written_by_an_older_build_still_loads(self, fleet):
++        """A profile that cannot be read is a truck that silently stops being
++        assessable."""
++        services.set_equipment_capacity_profile(
++            fleet["equipment_id"], max_weight_lbs=44000, source="spec", verified_by="Mike",
++        )
++        from dispatch.db import get_connection
++
++        with get_connection() as conn:
++            conn.execute(
++                "UPDATE capacity_profiles SET physical=? WHERE equipment_id=?",
++                ('{"max_weight_lbs": 40000, "a_field_that_no_longer_exists": 1}',
++                 fleet["equipment_id"]),
++            )
++        capacity = capacity_store.load_capacity(fleet["equipment_id"])
++        assert capacity.physical.max_weight_lbs == 40000
++
++    def test_unreadable_json_degrades_to_defaults_rather_than_raising(self, fleet):
++        services.set_equipment_capacity_profile(
++            fleet["equipment_id"], max_weight_lbs=44000, source="spec",
++        )
++        from dispatch.db import get_connection
++
++        with get_connection() as conn:
++            conn.execute(
++                "UPDATE capacity_profiles SET physical=? WHERE equipment_id=?",
++                ("{not json", fleet["equipment_id"]),
++            )
++        assert capacity_store.load_capacity(fleet["equipment_id"]) is not None
++
++
++class TestCoverage:
++    def test_it_names_the_trucks_that_cannot_be_assessed(self, fleet):
++        services.create_equipment(unit_number="T-102")
++        coverage = services.capacity_coverage()
++        assert coverage["total"] == 2
++        assert coverage["profiled"] == 0
++        assert len(coverage["unprofiled"]) == 2
++        assert coverage["complete"] is False
++
++    def test_it_is_complete_once_every_truck_has_one(self, fleet):
++        services.set_equipment_capacity_profile(
++            fleet["equipment_id"], max_weight_lbs=44000, source="spec",
++        )
++        assert services.capacity_coverage()["complete"] is True
++
++
++class TestTheRoutes:
++    @pytest.fixture
++    def client(self, fleet, tmp_path, monkeypatch):
++        monkeypatch.setenv("PORTAL_DATA_DIR", str(tmp_path / "PortalData"))
++        from portal.app import create_app
++
++        app = create_app({"TESTING": True})
++        app.config["LOGIN_DISABLED"] = True
++        return app.test_client()
++
++    def test_the_api_reports_unconfigured_honestly(self, client, fleet):
++        load = services.create_load(customer="Acme")
++        body = client.get(f"/api/dispatch/loads/{load['load_id']}/capacity").get_json()
++        assert body["status"] == "ok"
++        assert body["capacity"]["status"] == "UNCONFIGURED"
++        assert body["capacity"]["reason"]
++
++    def test_a_profile_can_be_set_and_read_back(self, client, fleet):
++        response = client.put(
++            f"/api/dispatch/equipment/{fleet['equipment_id']}/capacity",
++            json={"max_weight_lbs": 44000, "source": "door sticker", "verified_by": "Mike"},
++        )
++        assert response.status_code == 200
++        read = client.get(f"/api/dispatch/equipment/{fleet['equipment_id']}/capacity").get_json()
++        assert read["capacity_status"] == "CONFIGURED"
++
++    def test_a_profile_without_a_source_is_refused(self, client, fleet):
++        response = client.put(
++            f"/api/dispatch/equipment/{fleet['equipment_id']}/capacity",
++            json={"max_weight_lbs": 44000},
++        )
++        assert response.status_code == 400
++        assert "source is required" in response.get_json()["error"]
++
++    def test_the_load_page_shows_the_assessment(self, client, fleet):
++        services.set_equipment_capacity_profile(
++            fleet["equipment_id"], max_weight_lbs=44000, source="spec", verified_by="Mike",
++        )
++        load = services.create_load(customer="Acme")
++        services.assign_equipment(load["load_id"], fleet["equipment_id"])
++        body = client.get(f"/dispatch/{load['load_id']}").get_data(as_text=True)
++        assert "Does this load fit the truck?" in body
++        assert "Advisory only" in body
++
++    def test_the_page_says_unconfigured_rather_than_hiding_the_panel(self, client, fleet):
++        load = services.create_load(customer="Acme")
++        body = client.get(f"/dispatch/{load['load_id']}").get_data(as_text=True)
++        assert "UNCONFIGURED" in body
++        assert "No truck is assigned" in body
+diff --git a/tests/test_rate_confirmation_print.py b/tests/test_rate_confirmation_print.py
+index 884ebe0..c3d548c 100644
+--- a/tests/test_rate_confirmation_print.py
++++ b/tests/test_rate_confirmation_print.py
+@@ -154,14 +154,18 @@ class TestRateConfirmationPrintContent:
+         _confirm_rate(load["load_id"])
+         resp = client.get(f"/dispatch/{load['load_id']}/rate-confirmation/print")
+         html = resp.data.decode()
+-        assert "2026-08-10 08:00" in html
++        assert "10 Aug 2026, 08:00" in html
+ 
+     def test_shows_delivery_datetime(self, client):
+         load = _make_load(delivery_datetime="2026-08-12 14:00")
+         _confirm_rate(load["load_id"])
+         resp = client.get(f"/dispatch/{load['load_id']}/rate-confirmation/print")
+         html = resp.data.decode()
+-        assert "2026-08-12 14:00" in html
++        # Rendered for a person, not as an ISO string. A broker receiving
++        # "2026-08-12T14:00:00-04:00" on a rate confirmation has to decode it,
++        # and so does the driver reading the same value on his own screen
++        # (DRIVER_FIRST_DOCTRINE_v2 D2, the 70 MPH Test).
++        assert "12 Aug 2026, 14:00" in html
+ 
+     def test_shows_equipment_type(self, client):
+         load = _make_load(equipment="Dry Van 53ft")
+diff --git a/tests/test_timestamps.py b/tests/test_timestamps.py
+new file mode 100644
+index 0000000..e1621ce
+--- /dev/null
++++ b/tests/test_timestamps.py
+@@ -0,0 +1,175 @@
++"""An appointment time an operator typed is stored so it cannot be misread.
++
++Found while wiring the capacity engine into production, and it is the reason
++wiring it would otherwise have made every load unassessable.
++
++`capacity.parse_operational_timestamp` is right about the hard part -- "a pickup
++window in an unstated zone is genuinely ambiguous, and guessing costs a load" --
++and returns TIMESTAMP_NAIVE for a value with no offset, which the caller turns
++into a SEVERITY_BLOCKING finding. The load form's own placeholder was
++`YYYY-MM-DD HH:MM`: a naive timestamp. Every load entered in the documented
++format would have produced a blocking capacity finding, and the conclusion a
++person draws from that is "the capacity engine refuses everything".
++
++The same gap had a quieter effect. `get_load_calendar()` selected a month by
++string prefix on a free-text field, so a load typed as `9/14/2026 08:00` -- the
++format a US dispatcher writes by hand, accepted without complaint by a
++`type="text"` input -- was simply not on the calendar. No error, no warning, no
++row.
++"""
++
++from __future__ import annotations
++
++from datetime import datetime, timezone
++
++import pytest
++
++from dispatch import services, timestamps
++from dispatch.capacity import (
++    TIMESTAMP_NAIVE,
++    TIMESTAMP_PARSED,
++    parse_operational_timestamp,
++)
++from dispatch.db import set_db_path
++
++
++@pytest.fixture(autouse=True)
++def _eastern(monkeypatch):
++    monkeypatch.setenv("DISPATCH_OPERATING_TIMEZONE", "America/New_York")
++
++
++@pytest.fixture
++def database(tmp_path):
++    set_db_path(tmp_path / "dispatch.db")
++    try:
++        yield
++    finally:
++        set_db_path(None)
++
++
++class TestNormalisation:
++    @pytest.mark.parametrize(
++        "typed",
++        [
++            "2026-09-14 08:00",
++            "2026-09-14T08:00",
++            "2026-09-14T08:00:00",
++            "9/14/2026 08:00",
++            "9/14/2026 8:00 AM",
++            "09/14/2026 8:00 a.m.",
++        ],
++    )
++    def test_every_format_an_operator_types_becomes_the_same_instant(self, typed):
++        result = timestamps.normalize(typed)
++        assert result["status"] == timestamps.NORMALIZED
++        assert result["instant"] == datetime(
++            2026, 9, 14, 12, 0, tzinfo=timezone.utc
++        ), f"{typed!r} -> {result['value']}"
++
++    def test_a_value_that_already_carries_an_offset_is_left_alone(self):
++        """Re-serialising a correct value changes it for no reason, and for
++        anything comparing stored strings that is a change."""
++        result = timestamps.normalize("2026-09-14T08:00:00Z")
++        assert result["status"] == timestamps.ALREADY_OFFSET
++        assert result["value"] == "2026-09-14T08:00:00Z"
++
++    def test_what_cannot_be_read_is_kept_exactly_as_typed(self):
++        result = timestamps.normalize("next tuesday, after the Dallas run")
++        assert result["status"] == timestamps.UNVERIFIED
++        assert result["value"] == "next tuesday, after the Dallas run"
++        assert "could not read" in result["note"]
++
++    def test_empty_is_missing_not_an_error(self):
++        for value in ("", "   ", None):
++            assert timestamps.normalize(value)["status"] == timestamps.MISSING
++
++    def test_daylight_saving_is_taken_from_the_zone_not_assumed(self):
++        summer = timestamps.normalize("2026-07-14 08:00")["value"]
++        winter = timestamps.normalize("2026-01-14 08:00")["value"]
++        assert summer.endswith("-04:00")
++        assert winter.endswith("-05:00")
++
++
++class TestTheCapacityEngineAcceptsWhatTheFormProduces:
++    """The whole point. Before this, it did not."""
++
++    def test_the_documented_input_format_is_no_longer_blocking(self):
++        raw = "2026-09-14 08:00"
++        assert parse_operational_timestamp(raw)[1] == TIMESTAMP_NAIVE
++
++        stored = timestamps.normalize(raw)["value"]
++        parsed, status = parse_operational_timestamp(stored)
++        assert status == TIMESTAMP_PARSED
++        assert parsed == datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
++
++    def test_a_load_created_through_the_service_is_assessable(self, database):
++        load = services.create_load(customer="Acme", pickup_datetime="2026-09-14 08:00")
++        stored = services.get_load(load["load_id"])["pickup_datetime"]
++        assert parse_operational_timestamp(stored)[1] == TIMESTAMP_PARSED
++
++    def test_an_updated_appointment_is_normalised_too(self, database):
++        load = services.create_load(customer="Acme")
++        services.update_load(load["load_id"], pickup_datetime="9/14/2026 8:00 AM")
++        stored = services.get_load(load["load_id"])["pickup_datetime"]
++        assert parse_operational_timestamp(stored)[1] == TIMESTAMP_PARSED
++
++
++class TestTheCalendarStopsLosingLoads:
++    def test_a_us_format_appointment_appears(self, database):
++        load = services.create_load(customer="Acme", pickup_datetime="9/14/2026 08:00")
++        calendar = services.get_load_calendar(2026, 9)
++        assert "2026-09-14" in calendar["pickups"]
++        assert calendar["pickups"]["2026-09-14"][0]["load_id"] == load["load_id"]
++
++    def test_the_day_is_the_operators_day_not_the_strings(self, database):
++        """A delivery at 2026-09-15T01:00Z is the evening of the 14th in Eastern
++        time. It used to be filed on the 15th because the day was sliced off the
++        raw string."""
++        services.create_load(customer="Acme", delivery_datetime="2026-09-15T01:00:00Z")
++        calendar = services.get_load_calendar(2026, 9)
++        assert "2026-09-14" in calendar["deliveries"]
++        assert "2026-09-15" not in calendar["deliveries"]
++
++    def test_an_unreadable_appointment_is_reported_not_dropped(self, database):
++        load = services.create_load(customer="Acme", pickup_datetime="whenever they call")
++        calendar = services.get_load_calendar(2026, 9)
++        assert any(u["load_id"] == load["load_id"] for u in calendar["unreadable"])
++
++    def test_the_calendar_names_the_zone_it_is_showing(self, database):
++        assert "New_York" in services.get_load_calendar(2026, 9)["timezone"]
++
++
++class TestDisplay:
++    def test_a_person_reads_a_time_not_an_iso_string(self):
++        rendered = timestamps.describe("2026-09-14 08:00")
++        assert "14 Sep 2026" in rendered
++        assert "08:00" in rendered
++        assert "EDT" in rendered
++        assert "T08:00:00-04:00" not in rendered
++
++    def test_an_unreadable_value_is_shown_as_typed(self):
++        assert timestamps.describe("call the broker") == "call the broker"
++
++    def test_the_rate_confirmation_a_broker_receives_is_readable(self, database, tmp_path, monkeypatch):
++        monkeypatch.setenv("PORTAL_DATA_DIR", str(tmp_path / "PortalData"))
++        from portal.app import create_app
++
++        app = create_app({"TESTING": True})
++        app.config["LOGIN_DISABLED"] = True
++        client = app.test_client()
++
++        load = services.create_load(customer="Acme", pickup_datetime="2026-09-14 08:00")
++        services.confirm_rate(load["load_id"], rate_amount=1500.0, confirmed_by="Mike")
++        html = client.get(f"/dispatch/{load['load_id']}/rate-confirmation/print").get_data(as_text=True)
++        assert "14 Sep 2026, 08:00" in html
++
++
++class TestFallbacks:
++    def test_an_unavailable_zone_still_produces_an_unambiguous_value(self, monkeypatch):
++        """A missing tzdata is a deployment fact, not a reason to refuse to start
++        -- but the screen has to say which zone it actually used."""
++        monkeypatch.setenv("DISPATCH_OPERATING_TIMEZONE", "Mars/Olympus_Mons")
++        result = timestamps.normalize("2026-09-14 08:00")
++        assert result["status"] == timestamps.NORMALIZED
++        assert parse_operational_timestamp(result["value"])[1] == TIMESTAMP_PARSED
++        assert "unavailable" in timestamps.timezone_name()
+-- 
+2.43.0
+

@@ -1,0 +1,144 @@
+[
+  {
+    "number": 5,
+    "name": "Monetary calculation and migration",
+    "command": "/tmp/claude-0/venv/bin/python -m pytest -o addopts= -q tests/test_money.py",
+    "exit_code": 0,
+    "output": "61 passed in 3.47s",
+    "outcome": "PASSED",
+    "note": "Exactness, ROUND_HALF_UP, the generated cents columns, and the two reports that used to disagree by pennies.",
+    "data": {}
+  },
+  {
+    "number": 3,
+    "name": "Execute proof step 18 against a real load",
+    "command": "python scripts/dispatch_proof.py verify --load-id LOAD-20260912-FC5D0CB2",
+    "exit_code": 0,
+    "output": "[snapshot (before the restart)] exit 0\nsnapshot written: proof/load/proof_snapshot_LOAD-20260912-FC5D0CB2.json\n  drivers        0\n  equipment      0\n  evidence       1\n  exceptions     0\n  loads          1\n  milestones     0\n  pod_packages   0\n\n[step 18 \u00b7 verify] exit 0\n    exceptions     0  \u2014\n    loads          1  LOAD-20260912-FC5D0CB2\n    milestones     0  \u2014\n    pod_packages   0  \u2014\n  Compared against snapshot taken 2026-09-12T21:15:47Z\n    drivers        ok\n    equipment      ok\n    evidence       ok\n    exceptions     ok\n    loads          ok\n    milestones     ok\n    pod_packages   ok\n    evidence EV-20260912-9AE51407  ok\n  RESULT: PASSED",
+    "outcome": "PASSED",
+    "note": "Before this work: `invalid choice: 'verify'`.",
+    "data": {}
+  },
+  {
+    "number": 3,
+    "name": "Proof step 18 fails when the evidence bytes change",
+    "command": "verify (after tampering)",
+    "exit_code": 1,
+    "output": "  Compared against snapshot taken 2026-09-12T21:15:47Z\n    drivers        ok\n    equipment      ok\n    evidence       ok\n    exceptions     ok\n    loads          ok\n    milestones     ok\n    pod_packages   ok\n    evidence EV-20260912-9AE51407  DRIFT\n  RESULT: FAILED",
+    "outcome": "PASSED",
+    "note": "Exit 1 is the correct result. The evidence row is untouched and only a recomputed hash says otherwise.",
+    "data": {}
+  },
+  {
+    "number": 6,
+    "name": "Create a backup",
+    "command": "python -m dispatch_launcher backup",
+    "exit_code": 0,
+    "output": "  Backup written to /tmp/dispatch-evidence-2l3beu1c/Backups/dispatch-backup-20260912T211547Z\n      2 files, 606,232 bytes\n      This backup has not been restored, so it is not yet known to be usable.\n      Prove it with:  python -m dispatch_launcher prove-restore",
+    "outcome": "PASSED",
+    "note": "Nothing in the product could take one before this work.",
+    "data": {}
+  },
+  {
+    "number": 6,
+    "name": "Verify every hash in the archive",
+    "command": "python scripts/dispatch_backup.py verify dispatch-backup-20260912T211547Z",
+    "exit_code": 0,
+    "output": "/tmp/dispatch-evidence-2l3beu1c/Backups/dispatch-backup-20260912T211547Z: 2 files verified, all hashes match",
+    "outcome": "PASSED",
+    "note": "",
+    "data": {}
+  },
+  {
+    "number": 7,
+    "name": "Restore into an isolated destination",
+    "command": "python -m dispatch_launcher prove-restore",
+    "exit_code": 0,
+    "output": "  Restore proven in an isolated destination.\n      restored 2 files to /tmp/dispatch-restore-proof-y7vzj8j2\n      verification record: /tmp/dispatch-evidence-2l3beu1c/Backups/dispatch-backup-20260912T211547Z.restore-verification.json\n      repointed 1 stored file paths\n      Recorded as Code-automated. The archive restores and every hash matches;\n      that the restored Dispatch actually works is still for a person to confirm.",
+    "outcome": "PASSED",
+    "note": "Recorded as Code-automated, so the status stays UNVERIFIED. A person confirming the restored copy works is what reaches VERIFIED.",
+    "data": {}
+  },
+  {
+    "number": 7,
+    "name": "Backup status after a machine-performed restore",
+    "command": "backup_status()",
+    "exit_code": 0,
+    "output": "UNVERIFIED\nThis backup was restored into an isolated destination by the program on 2026-09-12T21:15:48Z and every hash matched. Nobody has opened the restored Dispatch and confirmed it works, so it is not VERIFIED. Do that and record it with:  python -m dispatch_launcher prove-restore --confirmed-by \"Mike\"",
+    "outcome": "PASSED",
+    "note": "UNVERIFIED is the correct answer and the point of the step.",
+    "data": {}
+  },
+  {
+    "number": 8,
+    "name": "Injected failures across atomic operations",
+    "command": "/tmp/claude-0/venv/bin/python -m pytest -o addopts= -q tests/test_atomic_service_operations.py",
+    "exit_code": 0,
+    "output": "14 passed in 0.84s",
+    "outcome": "PASSED",
+    "note": "Each test breaks a store call after the first successful write and asserts the first write is gone too.",
+    "data": {}
+  },
+  {
+    "number": 9,
+    "name": "Concurrent PIN attempts and SQLite contention",
+    "command": "/tmp/claude-0/venv/bin/python -m pytest -o addopts= -q tests/test_auth_lockout_concurrency.py",
+    "exit_code": 0,
+    "output": "14 passed in 3.18s",
+    "outcome": "PASSED",
+    "note": "12 concurrent failures were recorded as 1 before; the lockout never tripped.",
+    "data": {}
+  },
+  {
+    "number": 10,
+    "name": "Notification failure visibility and retry",
+    "command": "/tmp/claude-0/venv/bin/python -m pytest -o addopts= -q tests/test_delivery_visibility.py",
+    "exit_code": 0,
+    "output": "21 passed in 1.46s",
+    "outcome": "PASSED",
+    "note": "",
+    "data": {}
+  },
+  {
+    "number": 13,
+    "name": "Microsoft stays behind provider-neutral adapters",
+    "command": "/tmp/claude-0/venv/bin/python -m pytest -o addopts= -q tests/test_transport.py tests/test_msauth.py",
+    "exit_code": 0,
+    "output": "48 passed in 0.16s",
+    "outcome": "PASSED",
+    "note": "No Microsoft call has been made from this repository.",
+    "data": {}
+  },
+  {
+    "number": 14,
+    "name": "Remove generated caches and runtime debris",
+    "command": "find ... -name __pycache__ -exec rm -rf",
+    "exit_code": 0,
+    "output": "(working tree clean of untracked debris)",
+    "outcome": "PASSED",
+    "note": "",
+    "data": {
+      "pycache_removed": 14
+    }
+  },
+  {
+    "number": 15,
+    "name": "Scan for secrets and credentials",
+    "command": "python _evidence_secrets.py",
+    "exit_code": 0,
+    "output": "scanned 489 tracked text files against 8 patterns:\n  - private key block\n  - aws access key id\n  - slack token\n  - github token\n  - azure/entra secret\n  - bearer literal\n  - assigned credential\n  - connection string\n4 known published development default(s) excluded by name; portal/config.py\nrefuses to start an operational deployment on any of them.\n5 match(es) inside tests/ -- listed, not excused:\n  FIXTURE  assigned credential  tests/test_connectors.py:371  password = \"relay-password-abcdef\"\n  FIXTURE  private key block    tests/test_sandbox_survey.py:899  -----BEGIN RSA PRIVATE KEY-----\n  FIXTURE  aws access key id    tests/test_sandbox_survey.py:54  AKIAQ7HXH2PL4TZ0RVKM\n  FIXTURE  assigned credential  tests/test_stakeholder_evidence_download.py:104  token=\"not-the-real-token\"\n  FIXTURE  assigned credential  tests/test_stakeholder_portal.py:65  token=\"not-the-real-token\"\nNo credential matches outside tests/.",
+    "outcome": "PASSED",
+    "note": "",
+    "data": {}
+  },
+  {
+    "number": 16,
+    "name": "Merge plan against the actual diff",
+    "command": "git log --oneline 3c03ab2..HEAD; git diff --stat",
+    "exit_code": 0,
+    "output": "fdeac1d Measure branch coverage, and measure the launcher\n3b1ea1b Wire the capacity engine into production, and make appointment times readable\n0764bc4 Record every outbound attempt, log it, and give the log a size\n869605b Put a provider-neutral transport behind the mail path, with Microsoft-compatible auth\n39bed43 Give the operator a way to take a backup, and to prove one\n593de61 Money becomes whole cents, exactly, everywhere it is added up\n470af3d Move the PIN lockout counters where a transaction protects them\n59c1534 Make multi-step service operations atomic, and defer sends past the commit\n5e5f34d Replace the dashboard's per-load queries with two rollups\n42902ba Build the schema once per process, wait for a write lock, and allow a unit of work\n07bfdb1 Repair the operational proof path and make it executable\n\n tests/test_proof_command_contract.py          | 158 ++++++++++\n tests/test_proof_persistence_verify.py        | 198 ++++++++++++\n tests/test_rate_confirmation_print.py         |   8 +-\n tests/test_timestamps.py                      | 175 +++++++++++\n tests/test_transport.py                       | 289 +++++++++++++++++\n 65 files changed, 7858 insertions(+), 208 deletions(-)",
+    "outcome": "PASSED",
+    "note": "",
+    "data": {}
+  }
+]
