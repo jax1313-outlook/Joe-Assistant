@@ -1,7 +1,7 @@
 From 02efacaceb507cd714eefe421d33d7cb28a07b00 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 13 Sep 2026 01:56:39 +0000
-Subject: [PATCH 14/14] Stop the JSON stores losing a concurrent update
+Subject: [PATCH 14/15] Stop the JSON stores losing a concurrent update
 
 atomic_write_json has always guaranteed a reader never sees half a file. It
 could not guarantee two writers do not overwrite each other, because the

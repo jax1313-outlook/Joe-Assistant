@@ -39,16 +39,16 @@ line reads "IN FORCE" while its filename says PROPOSED.
 Also corrected: the "87 documents" figure. The real corpus is **425** Markdown
 files across the clones.
 
-### `0013` amended — the distance was one join away
+### `0015` — the distance was one join away
 
-`transit_hours()` read `distance_miles` off the load, found it absent, and
+Amends `0013`. `transit_hours()` read `distance_miles` off the load, found it absent, and
 honestly reported that arrival times could not be projected. Accurate, and one
 join short: `RateConfirmation` carries it. So the forward walk was off for every
 load *including the ones with the data*. It now falls back to the rate
 confirmation — the better source anyway, being miles somebody committed to
 rather than an estimate.
 
-### `0015` — evidence over 4 MB uploads instead of being refused
+### Evidence over 4 MB uploads instead of being refused *(sandbox: `Assistant_Plugin/m365`)*
 
 Files over 4 MB were refused by name. A driver photographing a bill of lading
 produces 3–8 MB routinely, so the refusal declined the ordinary case.
@@ -59,6 +59,10 @@ never returned the finished item, and when it returned a `200` with no `id`.
 Both now `UNVERIFIED` with the session cancelled.
 
 **Dispatch suite 4,217 → 4,220. Sandbox suite 681 → 692.**
+
+Patches `0013`–`0015` were applied to a clean checkout of the Phase 2 base with
+`git am` and their tests run there: 49 passed. The patch files are what they
+claim to be.
 
 ---
 

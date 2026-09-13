@@ -7,7 +7,7 @@ Check it with:
 
     python Dispatch_Corrections/verify_manifest.py
 
-**572 files, 5,037,072 bytes.**
+**573 files, 5,046,894 bytes.**
 
 Excluded: `.git/`, `__pycache__/`, `.pytest_cache/`, compiled Python, the
 archive of this tree, and this file itself.
@@ -501,7 +501,7 @@ archive of this tree, and this file itself.
 | `Build/sandbox_engine/intents.py` | 7770 | `f8bf218db54080021d272eb026917cb1cfb76b21fbfa3c9fa44cd948481e0995` |
 | `Build/sandbox_engine/records.py` | 6317 | `e9de6c087c53f65d48687bef7721c93f1327bcd771c59bd6afe9de2f6ecc5f0b` |
 | `Build/sandbox_engine/store.py` | 6851 | `cb0e1a6f0a444d28c8d066b4a7f13c3b496dd063eb7d9c01b472e02572a16bda` |
-| `CHANGE_LOG.md` | 5250 | `d8ffe2c7b946d0e85ae03484f58171ab79891130e014a8e096e2857f2406136d` |
+| `CHANGE_LOG.md` | 7947 | `1d27e64ed34c2a7397a23a4ac9c9b1d609344b11cafa0bb6470ea0d6a511f4ad` |
 | `Constitution/SANDBOX_ENGINE_BOUNDARIES_v1.md` | 8728 | `f41f929135570afdec3602565dcadf1a54e5a03adbd699db1520ef5f263bc890` |
 | `Context/SANDBOX_ENGINE_CONTEXT_v1.md` | 6984 | `ed74eea4459c78060614e4f7f7cb8547c95c6fe3ad5b5465f6ee4a437300ac91` |
 | `DISPATCH_AGENT_GOVERNANCE_LAW_v1.md` | 18723 | `fb57871aa071ef4729010632186fdd75004bbbb289359e00cb503bb11738857e` |
@@ -536,8 +536,9 @@ archive of this tree, and this file itself.
 | `Dispatch_Corrections/patches/0010-Wire-the-capacity-engine-into-production-and-make-ap.patch` | 76280 | `0d6eb971b117902613398dea7f5f4a7e78ad4aef5dea8472523753bd8d956a51` |
 | `Dispatch_Corrections/patches/0011-Measure-branch-coverage-and-measure-the-launcher.patch` | 5751 | `fda98059130c48e09ded5e6ca298d22f79ecc8b19b94eb544d1d61f35585894e` |
 | `Dispatch_Corrections/patches/0012-Record-what-governs-this-repository-and-adjudicate-t.patch` | 8717 | `599ba7be3e88cc11f5dfcbfcc497ea79512be57a4483d953be35e9b7342baa7e` |
-| `Dispatch_Corrections/patches/0013-Build-capacity-stops-from-real-loads-and-refuse-to-i.patch` | 32239 | `db02bb095dd2f887f425873819435e140d63132aa0cad25ac7c73d6ce4c703f5` |
-| `Dispatch_Corrections/patches/0014-Stop-the-JSON-stores-losing-a-concurrent-update.patch` | 35309 | `50edf7b483f990f1e8660dabadfc701af028afba489a703ab834c8811a00aa2f` |
+| `Dispatch_Corrections/patches/0013-Build-capacity-stops-from-real-loads-and-refuse-to-i.patch` | 32239 | `1a6d4a0657d5fb07c8480bfae100449ce44487f7e86216851662e5bb66eb193a` |
+| `Dispatch_Corrections/patches/0014-Stop-the-JSON-stores-losing-a-concurrent-update.patch` | 35309 | `297fe39a1b29d63c383401f86aea7e329b058b034c634f04f9592fdeb2a0dd15` |
+| `Dispatch_Corrections/patches/0015-Take-the-transit-distance-from-the-rate-confirmation.patch` | 7125 | `b6adb43f951ea32b9b82c591b9f1d1de64498fa5630ae5ac3ff7d27be7d21e8a` |
 | `Dispatch_Corrections/verify_manifest.py` | 4165 | `5ac66ff482b380075d916a072e30d540e5150768f6438c9a3b33ce49021a59ab` |
 | `Ergonomic Hybrid JOE Display.md` | 15299 | `be03c4cb04648b2ca2d9983b1577eb6101d45ee0bac4a40700e4d0d0c1f39f6c` |
 | `GOVERNANCE.md` | 2680 | `8344b284dff71ff6bff1a653abb4717770b0824355727b26862c125ad086b3fa` |
