@@ -1,0 +1,933 @@
+From 02efacaceb507cd714eefe421d33d7cb28a07b00 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 13 Sep 2026 01:56:39 +0000
+Subject: [PATCH 14/14] Stop the JSON stores losing a concurrent update
+
+atomic_write_json has always guaranteed a reader never sees half a file. It
+could not guarantee two writers do not overwrite each other, because the
+damage is done before either write starts: both read, both mutate their own
+copy, and the second os.replace wins. The docstring said so and stopped
+there, calling locking "a separate, larger question".
+
+Measured on this repository: twelve processes each queuing one publisher
+action, and the store held **two**. Ten records gone. Nothing corrupt,
+nothing anywhere saying so -- the same shape as the PIN-lockout defect fixed
+earlier, minus the security consequence. And Dispatch runs the portal and
+the launcher as two processes against one folder, so this is reachable
+rather than theoretical.
+
+store_lock() is an exclusive cross-process lock on one store, and guarded()
+is the decorator that holds it across the whole read-modify-write. The
+decorator was chosen over restructuring: every mutator already reads, edits
+and saves, so one line above each of them fixes the race without touching
+138 call sites and inventing 138 chances to get it wrong. It mirrors the
+@atomic decorator the service layer already uses, so there is one idiom for
+this in the codebase rather than two.
+
+Applied to all forty-one mutating functions across all eleven stores.
+
+The lock file sits beside the store rather than being the store. Two
+reasons: os.replace swaps the file on every write, so a lock held on its
+inode stops describing the file that is there; and a store that does not
+exist yet still needs a lock, because the first two writers race hardest.
+
+Reentrant within a thread, because an operation composed of other
+operations on the same store is ordinary and deadlocking on itself would be
+a worse failure than the one being fixed. Blocking rather than timing out,
+because a writer that waits a millisecond is doing the right thing and a
+writer that gives up loses the record this exists to protect.
+
+Windows and POSIX both, via msvcrt and fcntl -- Windows because that is
+where Dispatch runs, POSIX because that is where the suite runs.
+
+After: twelve of twelve, repeatably across four runs.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PohbRGCKjuPQQ9ZxJhJv83
+---
+ portal/models/__init__.py              | 133 +++++++++++++-
+ portal/models/archive.py               |   4 +-
+ portal/models/completion_packet.py     |   6 +-
+ portal/models/conflict.py              |   4 +-
+ portal/models/driver_pin_registry.py   |   9 +-
+ portal/models/email_helper.py          |   5 +-
+ portal/models/identity.py              |   5 +-
+ portal/models/integrations_registry.py |   4 +-
+ portal/models/intelligence.py          |   4 +-
+ portal/models/library.py               |   6 +-
+ portal/models/publisher.py             |   4 +-
+ portal/models/sandbox.py               |  12 +-
+ tests/test_store_concurrency.py        | 235 +++++++++++++++++++++++++
+ 13 files changed, 416 insertions(+), 15 deletions(-)
+ create mode 100644 tests/test_store_concurrency.py
+
+diff --git a/portal/models/__init__.py b/portal/models/__init__.py
+index 4838d53..107c480 100644
+--- a/portal/models/__init__.py
++++ b/portal/models/__init__.py
+@@ -1,6 +1,8 @@
+ """Portal data models — local JSON storage."""
+ 
+ import json
++import contextlib
++import functools
+ import os
+ import tempfile
+ from pathlib import Path
+@@ -22,10 +24,10 @@ def atomic_write_json(path: Path, data) -> None:
+     write. Same directory matters -- `os.replace` is only atomic within one
+     filesystem.
+ 
+-    This does NOT make concurrent writes safe. Two processes doing
+-    read-modify-write against the same store still lose one update; the last
+-    `os.replace` wins. Locking is a separate, larger question and is deliberately
+-    not attempted here (M-A, DISPATCH_BUILD_MATRIX_v1).
++    On its own this does NOT make concurrent writes safe: two processes doing
++    read-modify-write against the same store still lose one update, because the
++    last `os.replace` wins. `guarded()` below closes that, by holding a lock
++    across the read *and* the write rather than only making the write atomic.
+     """
+     path.parent.mkdir(parents=True, exist_ok=True)
+     fd, tmp_name = tempfile.mkstemp(
+@@ -70,3 +72,126 @@ def get_archive_dir() -> Path:
+     if explicit:
+         return Path(explicit)
+     return get_data_dir()
++
++
++# ── concurrent read-modify-write ─────────────────────────────────────────
++#
++# `atomic_write_json` guarantees a reader never sees half a file. It cannot
++# guarantee that two writers do not overwrite each other, because the damage is
++# done before either write starts:
++#
++#     process A: data = _load()        # {"x": 1}
++#     process B: data = _load()        # {"x": 1}
++#     process A: data["a"] = 1; _save(data)
++#     process B: data["b"] = 2; _save(data)   # A's change is gone
++#
++# Nothing is corrupt afterwards. A record simply is not there, and nothing
++# anywhere says so -- which is the same shape as the PIN-lockout defect, minus
++# the security consequence. Dispatch runs the portal and the launcher as two
++# processes against one folder, so this is reachable rather than theoretical.
++#
++# The fix is a lock held across the whole read-modify-write. It has to work on
++# Windows, because that is where Dispatch runs, and on POSIX, because that is
++# where the suite runs.
++
++try:  # pragma: no cover - platform branch, both sides exercised by tests
++    import fcntl
++
++    def _lock_file(handle) -> None:
++        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
++
++    def _unlock_file(handle) -> None:
++        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
++
++except ImportError:  # pragma: no cover - Windows
++    import msvcrt
++
++    def _lock_file(handle) -> None:
++        handle.seek(0)
++        # One byte is enough: every writer locks the same byte of the same file,
++        # so the range they contend on is identical. msvcrt blocks until it is
++        # free, which is the behaviour we want -- a writer waits rather than
++        # losing its update.
++        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
++
++    def _unlock_file(handle) -> None:
++        handle.seek(0)
++        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
++
++
++def lock_path_for(path: Path) -> Path:
++    """The lock file beside a store.
++
++    A separate `.lock` file rather than the store itself, for two reasons. The
++    store is replaced by `os.replace()` on every write, so a lock held on its
++    inode stops describing the file that is there. And a store that does not
++    exist yet still needs a lock -- the first two writers race hardest.
++    """
++    return path.parent / f".{path.name}.lock"
++
++
++@contextlib.contextmanager
++def store_lock(path: Path):
++    """Hold an exclusive cross-process lock on one JSON store.
++
++    Blocking, deliberately: a writer that waits a millisecond is doing the right
++    thing, and a writer that gives up loses the record this exists to protect.
++    """
++    lock_file = lock_path_for(path)
++    lock_file.parent.mkdir(parents=True, exist_ok=True)
++    handle = open(lock_file, "a+b")
++    try:
++        _lock_file(handle)
++        try:
++            yield
++        finally:
++            _unlock_file(handle)
++    finally:
++        handle.close()
++
++
++def guarded(path_getter):
++    """Run a whole read-modify-write under the store's lock.
++
++    Used as a decorator on the functions that mutate a store, so the body does
++    not have to change:
++
++        @guarded(_publisher_path)
++        def enqueue(entry):
++            data = _load()
++            data.append(entry)
++            _save(data)
++
++    `path_getter` is the module's own path function, called at invocation time
++    rather than import time, because every store resolves its path from
++    `PORTAL_DATA_DIR` and the tests move it.
++
++    Reentrant within a thread: an operation that calls another guarded
++    operation on the same store does not deadlock against itself. Across
++    processes it is a real exclusive lock.
++    """
++    def decorate(fn):
++        @functools.wraps(fn)
++        def wrapper(*args, **kwargs):
++            path = Path(path_getter())
++            held = getattr(_HELD, "paths", None)
++            if held is None:
++                held = set()
++                _HELD.paths = held
++            key = str(path.resolve() if path.exists() else path)
++            if key in held:
++                return fn(*args, **kwargs)
++            with store_lock(path):
++                held.add(key)
++                try:
++                    return fn(*args, **kwargs)
++                finally:
++                    held.discard(key)
++        return wrapper
++    return decorate
++
++
++import threading as _threading
++
++#: Which store locks this thread already holds. See `guarded`.
++_HELD = _threading.local()
+diff --git a/portal/models/archive.py b/portal/models/archive.py
+index e86ef22..631551d 100644
+--- a/portal/models/archive.py
++++ b/portal/models/archive.py
+@@ -27,7 +27,7 @@ import json
+ from datetime import datetime, timezone
+ from pathlib import Path
+ 
+-from portal.models import get_archive_dir, atomic_write_json
++from portal.models import get_archive_dir, atomic_write_json, guarded
+ 
+ # Same reserved-identity set as portal.models.publisher.RESERVED_SYSTEM_IDENTITIES. Duplicated
+ # rather than imported to keep this module's only real dependency (portal.models) unchanged --
+@@ -93,6 +93,7 @@ def get_section(section: str) -> list[dict]:
+     return _load().get(section, [])
+ 
+ 
++@guarded(_archive_path)
+ def create_record(section: str, source_id: str, title: str,
+                   record_data: dict, decision_summary: str = "",
+                   evidence: dict | None = None) -> dict:
+@@ -241,6 +242,7 @@ def list_review_queue(age_days: int = REVIEW_AGE_DAYS) -> list[dict]:
+     return queue
+ 
+ 
++@guarded(_archive_path)
+ def mark_reviewed(record_id: str, section: str, disposition: str,
+                   reason: str = "", reviewed_by: str | None = None) -> dict:
+     """Records a Keep/Delete decision.
+diff --git a/portal/models/completion_packet.py b/portal/models/completion_packet.py
+index 6d3825e..cac0884 100644
+--- a/portal/models/completion_packet.py
++++ b/portal/models/completion_packet.py
+@@ -17,7 +17,7 @@ import json
+ from datetime import datetime, timezone
+ from pathlib import Path
+ 
+-from portal.models import get_data_dir, atomic_write_json
++from portal.models import get_data_dir, atomic_write_json, guarded
+ 
+ STATUSES = ["ASSEMBLED", "ROUTED", "CLUSTERED", "ARCHIVED"]
+ 
+@@ -55,6 +55,7 @@ def list_packets() -> list[dict]:
+     return _load()
+ 
+ 
++@guarded(_packets_path)
+ def create_packet(
+     load_id: str,
+     closeout_data: dict,
+@@ -85,6 +86,7 @@ def create_packet(
+     return packet
+ 
+ 
++@guarded(_packets_path)
+ def mark_routed(load_id: str, publisher_action_id: str) -> dict:
+     packets = _load()
+     for packet in packets:
+@@ -97,6 +99,7 @@ def mark_routed(load_id: str, publisher_action_id: str) -> dict:
+     raise KeyError(f"Completion packet not found for load: {load_id}")
+ 
+ 
++@guarded(_packets_path)
+ def create_email_cluster(load_id: str, email_package: dict) -> dict:
+     """D10: 'Email Sent -> Render Email to Business Document -> Attach Related Files ->
+     Create Email Cluster -> Store With Completion Package.' Renders each sent email in a
+@@ -147,6 +150,7 @@ def create_email_cluster(load_id: str, email_package: dict) -> dict:
+     raise KeyError(f"Completion packet not found for load: {load_id}")
+ 
+ 
++@guarded(_packets_path)
+ def mark_archived(load_id: str, retention_archive_id: str) -> dict:
+     """D10's terminal step: 'Archive Takes Custody.' Records that the (existing,
+     human-triggered) Archive Load action has taken custody of this packet's Email
+diff --git a/portal/models/conflict.py b/portal/models/conflict.py
+index 86dc0ae..b862af0 100644
+--- a/portal/models/conflict.py
++++ b/portal/models/conflict.py
+@@ -9,7 +9,7 @@ import json
+ from datetime import datetime, timezone
+ from pathlib import Path
+ 
+-from portal.models import get_data_dir, atomic_write_json
++from portal.models import get_data_dir, atomic_write_json, guarded
+ 
+ CONFLICT_TYPES = [
+     "missing_broker_email",
+@@ -67,6 +67,7 @@ def get_unresolved() -> list[dict]:
+     return [n for n in _load() if not n.get("resolved")]
+ 
+ 
++@guarded(_conflicts_path)
+ def create_notice(
+     conflict_type: str,
+     severity: str,
+@@ -102,6 +103,7 @@ def create_notice(
+     return notice
+ 
+ 
++@guarded(_conflicts_path)
+ def resolve_notice(notice_id: str, resolution_note: str = "") -> dict:
+     notices = _load()
+     for notice in notices:
+diff --git a/portal/models/driver_pin_registry.py b/portal/models/driver_pin_registry.py
+index 7647dc5..b0d5790 100644
+--- a/portal/models/driver_pin_registry.py
++++ b/portal/models/driver_pin_registry.py
+@@ -43,7 +43,7 @@ from pathlib import Path
+ 
+ from werkzeug.security import check_password_hash, generate_password_hash
+ 
+-from portal.models import get_data_dir, get_memory_dir, atomic_write_json
++from portal.models import get_data_dir, get_memory_dir, atomic_write_json, guarded
+ 
+ MAX_FAILED_ATTEMPTS = 5
+ LOCKOUT_MINUTES = 15
+@@ -115,6 +115,7 @@ def list_pin_cards() -> list[dict]:
+     return [_public(rec) for rec in _load().values()]
+ 
+ 
++@guarded(_registry_path)
+ def create_pin_card(driver_id: str, pin: str, recovery_word: str, created_by: str) -> dict:
+     """Issue a new Driver PIN Card. Route-layer responsibility (not enforced here, same
+     split identity.py uses) is to only expose this behind the Authority PIN gate -- there
+@@ -155,6 +156,7 @@ def create_pin_card(driver_id: str, pin: str, recovery_word: str, created_by: st
+     return _public(record)
+ 
+ 
++@guarded(_registry_path)
+ def reset_pin(driver_id: str, new_pin: str, reset_by: str) -> dict:
+     """Mike-initiated PIN reset (no recovery word needed -- Mike is Authority). Also
+     clears any lockout, since a fresh PIN from Mike should not stay locked out."""
+@@ -174,6 +176,7 @@ def reset_pin(driver_id: str, new_pin: str, reset_by: str) -> dict:
+     return _public(record)
+ 
+ 
++@guarded(_registry_path)
+ def set_recovery_word(driver_id: str, recovery_word: str, set_by: str) -> dict:
+     if not recovery_word or len(recovery_word) < 3:
+         raise DriverPinError("Recovery word must be at least 3 characters.")
+@@ -188,6 +191,7 @@ def set_recovery_word(driver_id: str, recovery_word: str, set_by: str) -> dict:
+     return _public(record)
+ 
+ 
++@guarded(_registry_path)
+ def set_status(driver_id: str, status: str, changed_by: str) -> dict:
+     """Active/Inactive control (independent of the driver's own roster `status` on
+     dispatch/store.py's drivers table -- this one controls Driver Portal access only;
+@@ -206,6 +210,7 @@ def set_status(driver_id: str, status: str, changed_by: str) -> dict:
+     return _public(record)
+ 
+ 
++@guarded(_registry_path)
+ def delete_pin_card(driver_id: str, deleted_by: str) -> bool:
+     data = _load()
+     if driver_id not in data:
+@@ -219,6 +224,7 @@ def delete_pin_card(driver_id: str, deleted_by: str) -> bool:
+ # ── Driver Portal authentication (Phone Number + PIN) ───────────────
+ 
+ 
++@guarded(_registry_path)
+ def verify_login(phone: str, pin: str) -> dict | None:
+     """Validate phone + PIN. Returns the public PIN card record (plus the matched
+     driver_id) on success, None on failure. Phone is looked up live against the
+@@ -287,6 +293,7 @@ def verify_recovery_word(phone: str, recovery_word: str) -> dict | None:
+     return None
+ 
+ 
++@guarded(_registry_path)
+ def reset_pin_with_recovery_word(phone: str, recovery_word: str, new_pin: str) -> dict | None:
+     """Self-service PIN reset: recovery word stands in for the (forgotten) old PIN.
+     Returns the updated public record on success, None if the recovery word didn't
+diff --git a/portal/models/email_helper.py b/portal/models/email_helper.py
+index 10291cb..aacc4ac 100644
+--- a/portal/models/email_helper.py
++++ b/portal/models/email_helper.py
+@@ -34,7 +34,7 @@ import json
+ from datetime import datetime, timezone
+ from pathlib import Path
+ 
+-from portal.models import get_data_dir, atomic_write_json
++from portal.models import get_data_dir, atomic_write_json, guarded
+ from portal.models.publisher import RESERVED_SYSTEM_IDENTITIES
+ 
+ STATUSES = ["DRAFT", "REVIEWED", "SUBMITTED"]
+@@ -194,6 +194,7 @@ def _draft_customer_email(load: dict, closeout_data: dict | None = None) -> tupl
+     return to, subject, body
+ 
+ 
++@guarded(_packages_path)
+ def create_draft(
+     load_id: str,
+     load: dict,
+@@ -244,6 +245,7 @@ def create_draft(
+     return package
+ 
+ 
++@guarded(_packages_path)
+ def update_draft(load_id: str, **fields) -> dict:
+     packages = _load()
+     for package in packages:
+@@ -260,6 +262,7 @@ def update_draft(load_id: str, **fields) -> dict:
+     raise KeyError(f"Email package not found for load: {load_id}")
+ 
+ 
++@guarded(_packages_path)
+ def submit_package(load_id: str, submitted_by: str | None) -> dict:
+     """Send (or write a local fallback for) every recipient with a non-empty address.
+ 
+diff --git a/portal/models/identity.py b/portal/models/identity.py
+index c690974..ed1d371 100644
+--- a/portal/models/identity.py
++++ b/portal/models/identity.py
+@@ -19,7 +19,7 @@ from pathlib import Path
+ 
+ from werkzeug.security import check_password_hash, generate_password_hash
+ 
+-from portal.models import get_data_dir, atomic_write_json
++from portal.models import get_data_dir, atomic_write_json, guarded
+ 
+ MAX_FAILED_ATTEMPTS = 5
+ LOCKOUT_MINUTES = 15
+@@ -95,6 +95,7 @@ def get_identity(user_id: str) -> dict | None:
+     return _public(rec) if rec else None
+ 
+ 
++@guarded(_identity_path)
+ def bootstrap_authority(user_id: str, display_name: str, pin: str) -> dict:
+     """Create the first (and, in this build, only) Authority identity.
+ 
+@@ -132,6 +133,7 @@ def bootstrap_authority(user_id: str, display_name: str, pin: str) -> dict:
+     return _public(record)
+ 
+ 
++@guarded(_identity_path)
+ def set_pin(user_id: str, pin: str) -> dict:
+     """Replace an existing identity's PIN. The recovery path for a forgotten one.
+ 
+@@ -178,6 +180,7 @@ def _is_locked(record: dict) -> bool:
+     return authcounters.is_locked(authcounters.KIND_AUTHORITY, record.get("user_id", ""))
+ 
+ 
++@guarded(_identity_path)
+ def verify_pin(user_id: str, pin: str) -> dict | None:
+     """Validate a PIN. Returns the public identity record on success, None on failure.
+ 
+diff --git a/portal/models/integrations_registry.py b/portal/models/integrations_registry.py
+index 074bff8..cf90bb7 100644
+--- a/portal/models/integrations_registry.py
++++ b/portal/models/integrations_registry.py
+@@ -33,7 +33,7 @@ import json
+ from datetime import datetime, timezone
+ from pathlib import Path
+ 
+-from portal.models import get_data_dir, atomic_write_json
++from portal.models import get_data_dir, atomic_write_json, guarded
+ 
+ # The seven integration types specified by D4. Fixed set -- this is a generic container, not a
+ # per-vendor model, so callers must pick one of these rather than inventing new types.
+@@ -112,6 +112,7 @@ def get_entry(integration_type: str) -> dict:
+     return data.get(integration_type, _default_entry(integration_type))
+ 
+ 
++@guarded(_registry_path)
+ def upsert_entry(
+     integration_type: str,
+     api_key: str | None = None,
+@@ -149,6 +150,7 @@ def upsert_entry(
+     return entry
+ 
+ 
++@guarded(_registry_path)
+ def clear_entry(integration_type: str) -> dict:
+     """Reset all four credential fields for a type back to None, keeping the row (and its
+     created_at) rather than deleting it -- lets a reviewer wipe stored secrets without losing
+diff --git a/portal/models/intelligence.py b/portal/models/intelligence.py
+index c2c4eae..450436b 100644
+--- a/portal/models/intelligence.py
++++ b/portal/models/intelligence.py
+@@ -10,7 +10,7 @@ import json
+ from datetime import datetime, timezone
+ from pathlib import Path
+ 
+-from portal.models import get_memory_dir, atomic_write_json
++from portal.models import get_memory_dir, atomic_write_json, guarded
+ 
+ INTEL_TYPES = [
+     "location",
+@@ -75,6 +75,7 @@ def get_by_type(intel_type: str) -> list[dict]:
+     return _load().get(intel_type, [])
+ 
+ 
++@guarded(_intel_path)
+ def create_record(intel_type: str, subject: str, content: str,
+                   source: str = "", metadata: dict | None = None) -> dict:
+     if intel_type not in INTEL_TYPES:
+@@ -107,6 +108,7 @@ def create_record(intel_type: str, subject: str, content: str,
+     return record
+ 
+ 
++@guarded(_intel_path)
+ def update_record(record_id: str, content: str | None = None,
+                   metadata: dict | None = None,
+                   verification_status: str | None = None) -> dict:
+diff --git a/portal/models/library.py b/portal/models/library.py
+index 1ef5ef9..d90280e 100644
+--- a/portal/models/library.py
++++ b/portal/models/library.py
+@@ -22,7 +22,7 @@ import json
+ from datetime import datetime, timezone
+ from pathlib import Path
+ 
+-from portal.models import get_memory_dir, atomic_write_json
++from portal.models import get_memory_dir, atomic_write_json, guarded
+ 
+ SECTIONS = [
+     "company",
+@@ -89,6 +89,7 @@ def get_section(section: str) -> list[dict]:
+     return _load().get(section, [])
+ 
+ 
++@guarded(_library_path)
+ def add_record(section: str, name: str, content: str = "",
+                metadata: dict | None = None, submitted_by: str = "human") -> dict:
+     """Add a Library record.
+@@ -129,6 +130,7 @@ def add_record(section: str, name: str, content: str = "",
+     return record
+ 
+ 
++@guarded(_library_path)
+ def review_candidate(record_id: str, approve: bool, reviewed_by: str) -> dict:
+     """Promote or reject a machine-submitted (`pending_review`) record.
+ 
+@@ -190,6 +192,7 @@ def _trigger_publisher_on_approval(rec: dict) -> None:
+     )
+ 
+ 
++@guarded(_library_path)
+ def update_record(record_id: str, name: str | None = None,
+                   content: str | None = None,
+                   metadata: dict | None = None) -> dict:
+@@ -209,6 +212,7 @@ def update_record(record_id: str, name: str | None = None,
+     raise KeyError(f"Library record not found: {record_id}")
+ 
+ 
++@guarded(_library_path)
+ def delete_record(record_id: str) -> dict:
+     data = _load()
+     for section, section_records in data.items():
+diff --git a/portal/models/publisher.py b/portal/models/publisher.py
+index 2367a4b..874596f 100644
+--- a/portal/models/publisher.py
++++ b/portal/models/publisher.py
+@@ -16,7 +16,7 @@ import json
+ from datetime import datetime, timezone
+ from pathlib import Path
+ 
+-from portal.models import get_data_dir, atomic_write_json
++from portal.models import get_data_dir, atomic_write_json, guarded
+ 
+ # Identities that may never be used as an approver -- Publisher may not approve itself. Matches
+ # dispatch_publisher.models.RESERVED_SYSTEM_IDENTITIES from the tri-department build.
+@@ -92,6 +92,7 @@ def _manifest_for(action_type: str) -> list[str]:
+     return []
+ 
+ 
++@guarded(_publisher_path)
+ def create_action(
+     action_type: str,
+     sandbox_id: str,
+@@ -125,6 +126,7 @@ def create_action(
+     return action
+ 
+ 
++@guarded(_publisher_path)
+ def update_action_status(action_id: str, new_status: str, approved_by: str | None = None) -> dict:
+     """Update a Publisher action's status.
+ 
+diff --git a/portal/models/sandbox.py b/portal/models/sandbox.py
+index 518f79c..c38a093 100644
+--- a/portal/models/sandbox.py
++++ b/portal/models/sandbox.py
+@@ -10,7 +10,7 @@ import json
+ from datetime import datetime, timedelta, timezone
+ from pathlib import Path
+ 
+-from portal.models import get_data_dir, atomic_write_json
++from portal.models import get_data_dir, atomic_write_json, guarded
+ 
+ STATUSES = [
+     "OPEN",
+@@ -99,6 +99,7 @@ def get(sandbox_id: str) -> dict | None:
+     return _load().get(sandbox_id)
+ 
+ 
++@guarded(_sandbox_path)
+ def update_scoring(sandbox_id: str, scoring: dict) -> dict | None:
+     """Update Position/HOS fields and score from a scoring result dict."""
+     data = _load()
+@@ -120,6 +121,7 @@ def update_scoring(sandbox_id: str, scoring: dict) -> dict | None:
+     return entry
+ 
+ 
++@guarded(_sandbox_path)
+ def create_entry(
+     source_type: str,
+     source_id: str,
+@@ -188,6 +190,7 @@ def create_entry(
+     return entry
+ 
+ 
++@guarded(_sandbox_path)
+ def update_status(sandbox_id: str, new_status: str, note: str = "") -> dict:
+     if new_status not in STATUSES:
+         raise ValueError(f"Invalid status: {new_status}")
+@@ -207,6 +210,7 @@ def update_status(sandbox_id: str, new_status: str, note: str = "") -> dict:
+     return entry
+ 
+ 
++@guarded(_sandbox_path)
+ def set_inquiry_draft(sandbox_id: str, draft: dict) -> dict:
+     data = _load()
+     if sandbox_id not in data:
+@@ -217,6 +221,7 @@ def set_inquiry_draft(sandbox_id: str, draft: dict) -> dict:
+     return data[sandbox_id]
+ 
+ 
++@guarded(_sandbox_path)
+ def link_engine_load(sandbox_id: str, engine_load_id: str) -> dict:
+     """Store an engine load_id on a sandbox entry after booking."""
+     data = _load()
+@@ -234,6 +239,7 @@ def link_engine_load(sandbox_id: str, engine_load_id: str) -> dict:
+     return data[sandbox_id]
+ 
+ 
++@guarded(_sandbox_path)
+ def update_engine_status(sandbox_id: str, engine_status: str) -> dict | None:
+     """Sync engine load status back to the sandbox entry's card_data."""
+     data = _load()
+@@ -245,6 +251,7 @@ def update_engine_status(sandbox_id: str, engine_status: str) -> dict | None:
+     return data[sandbox_id]
+ 
+ 
++@guarded(_sandbox_path)
+ def add_note(sandbox_id: str, note: str) -> dict:
+     data = _load()
+     if sandbox_id not in data:
+@@ -256,6 +263,7 @@ def add_note(sandbox_id: str, note: str) -> dict:
+     return data[sandbox_id]
+ 
+ 
++@guarded(_sandbox_path)
+ def start_hold(sandbox_id: str, now: datetime | None = None) -> dict:
+     """Start the HOLD_HOURS clock on one sandbox entry.
+ 
+@@ -280,6 +288,7 @@ def start_hold(sandbox_id: str, now: datetime | None = None) -> dict:
+     return entry
+ 
+ 
++@guarded(_sandbox_path)
+ def run_hold_sweep(source_type: str = SANDBOX_SOURCE_FREIGHT, now: datetime | None = None) -> list[str]:
+     """Delete (not archive) every entry, IN THE GIVEN PROGRAM ONLY, whose
+     HOLD clock has expired.
+@@ -308,6 +317,7 @@ def run_hold_sweep(source_type: str = SANDBOX_SOURCE_FREIGHT, now: datetime | No
+     return expired_ids
+ 
+ 
++@guarded(_sandbox_path)
+ def clear_simulated(source_type: str | None = None) -> list[str]:
+     """Remove every SIMULATED entry. Returns the ids removed.
+ 
+diff --git a/tests/test_store_concurrency.py b/tests/test_store_concurrency.py
+new file mode 100644
+index 0000000..c0d01b4
+--- /dev/null
++++ b/tests/test_store_concurrency.py
+@@ -0,0 +1,235 @@
++"""The JSON stores no longer lose a concurrent update.
++
++`atomic_write_json` has always guaranteed that a reader never sees half a file.
++It could not guarantee that two writers do not overwrite each other, because
++the damage is done before either write begins: both read, both mutate their own
++copy, and the second `os.replace` wins.
++
++Measured on this repository before the fix, with twelve processes each queuing
++one publisher action: **the store held two.** Ten records gone, nothing corrupt,
++nothing anywhere saying so. That is the same shape as the PIN-lockout defect
++fixed earlier, minus the security consequence -- and Dispatch runs the portal
++and the launcher as two processes against one folder, so it is reachable rather
++than theoretical.
++
++After: twelve of twelve, repeatably.
++"""
++
++from __future__ import annotations
++
++import json
++import multiprocessing as mp
++import os
++import sys
++import threading
++from pathlib import Path
++
++import pytest
++
++from portal.models import atomic_write_json, guarded, lock_path_for, store_lock
++
++
++# ── the lock itself ──────────────────────────────────────────────────────
++
++
++class TestTheLock:
++    def test_it_lives_beside_the_store_not_in_it(self, tmp_path):
++        """A separate file, for two reasons: the store is replaced wholesale by
++        os.replace on every write so a lock on its inode stops describing the
++        file that is there, and a store that does not exist yet still needs a
++        lock -- the first two writers race hardest."""
++        store = tmp_path / "things.json"
++        lock = lock_path_for(store)
++        assert lock != store
++        assert lock.parent == store.parent
++        assert "things.json" in lock.name
++
++    def test_it_can_be_taken_before_the_store_exists(self, tmp_path):
++        store = tmp_path / "not-yet" / "things.json"
++        with store_lock(store):
++            pass
++        assert not store.exists()
++
++    def test_it_is_exclusive_between_threads(self, tmp_path):
++        store = tmp_path / "things.json"
++        order: list[str] = []
++        first_inside = threading.Event()
++        release = threading.Event()
++
++        def hold():
++            with store_lock(store):
++                order.append("A-in")
++                first_inside.set()
++                release.wait(timeout=5)
++                order.append("A-out")
++
++        def contend():
++            first_inside.wait(timeout=5)
++            with store_lock(store):
++                order.append("B-in")
++
++        a = threading.Thread(target=hold)
++        b = threading.Thread(target=contend)
++        a.start()
++        b.start()
++        first_inside.wait(timeout=5)
++        release.set()
++        a.join(timeout=10)
++        b.join(timeout=10)
++
++        assert order == ["A-in", "A-out", "B-in"], order
++
++    def test_it_is_released_even_when_the_body_raises(self, tmp_path):
++        store = tmp_path / "things.json"
++        with pytest.raises(RuntimeError):
++            with store_lock(store):
++                raise RuntimeError("boom")
++        # If the lock leaked, this would block forever rather than return.
++        with store_lock(store):
++            pass
++
++
++# ── the decorator ────────────────────────────────────────────────────────
++
++
++class TestTheGuard:
++    def test_it_resolves_the_path_at_call_time(self, tmp_path, monkeypatch):
++        """Every store reads its path from PORTAL_DATA_DIR, and the tests move
++        it. Resolving at import time would lock the wrong folder for the whole
++        run."""
++        seen: list[Path] = []
++
++        def where():
++            return Path(os.environ["A_STORE"])
++
++        @guarded(where)
++        def touch():
++            seen.append(where())
++
++        monkeypatch.setenv("A_STORE", str(tmp_path / "one.json"))
++        touch()
++        monkeypatch.setenv("A_STORE", str(tmp_path / "two.json"))
++        touch()
++        assert seen[0] != seen[1]
++
++    def test_a_guarded_call_inside_a_guarded_call_does_not_deadlock(self, tmp_path):
++        """An operation composed of other operations on the same store is
++        ordinary. Without reentrancy it would hang forever, which is a worse
++        failure than the one being fixed."""
++        store = tmp_path / "things.json"
++        reached = []
++
++        @guarded(lambda: store)
++        def inner():
++            reached.append("inner")
++
++        @guarded(lambda: store)
++        def outer():
++            reached.append("outer")
++            inner()
++
++        outer()
++        assert reached == ["outer", "inner"]
++
++    def test_it_returns_what_the_function_returns(self, tmp_path):
++        @guarded(lambda: tmp_path / "s.json")
++        def answer():
++            return 42
++
++        assert answer() == 42
++
++    def test_it_keeps_the_function_identity(self, tmp_path):
++        @guarded(lambda: tmp_path / "s.json")
++        def named(a, b=1):
++            """Docstring survives."""
++            return a + b
++
++        assert named.__name__ == "named"
++        assert "Docstring survives" in named.__doc__
++        assert named(1, b=2) == 3
++
++    def test_the_lock_is_dropped_when_the_body_raises(self, tmp_path):
++        store = tmp_path / "s.json"
++
++        @guarded(lambda: store)
++        def explode():
++            raise ValueError("no")
++
++        with pytest.raises(ValueError):
++            explode()
++
++        @guarded(lambda: store)
++        def after():
++            return "reached"
++
++        assert after() == "reached"
++
++
++# ── the defect, end to end ───────────────────────────────────────────────
++
++
++def _queue_one(args):
++    """Runs in a separate *process*: this is a cross-process race, not a
++    threading one, because Dispatch runs the portal and the launcher apart."""
++    repo, data_dir, n = args
++    sys.path.insert(0, repo)
++    os.environ["PORTAL_DATA_DIR"] = data_dir
++    os.environ.setdefault("DISPATCH_MODE", "development")
++    from portal.models import publisher
++
++    publisher.create_action(
++        action_type="govcon_draft", sandbox_id=f"SBX-{n}", trigger_reason="race"
++    )
++
++
++@pytest.mark.parametrize("writers", [12])
++def test_twelve_processes_queueing_at_once_all_land(tmp_path, monkeypatch, writers):
++    monkeypatch.setenv("PORTAL_DATA_DIR", str(tmp_path))
++    from portal.models import publisher
++
++    repo = str(Path(__file__).resolve().parent.parent)
++    with mp.Pool(writers) as pool:
++        pool.map(_queue_one, [(repo, str(tmp_path), i) for i in range(writers)])
++
++    queue = publisher.get_queue()
++    assert len(queue) == writers, (
++        f"{writers} processes each queued one action and the store holds "
++        f"{len(queue)}. Before the store lock this reliably held 2."
++    )
++    assert len({entry["sandbox_id"] for entry in queue}) == writers
++
++
++def test_threads_mutating_one_store_all_land(tmp_path, monkeypatch):
++    monkeypatch.setenv("PORTAL_DATA_DIR", str(tmp_path))
++    from portal.models import publisher
++
++    barrier = threading.Barrier(8)
++    errors: list[BaseException] = []
++
++    def queue(n):
++        try:
++            barrier.wait(timeout=5)
++            publisher.create_action(
++                action_type="govcon_draft", sandbox_id=f"T-{n}", trigger_reason="race"
++            )
++        except BaseException as exc:  # noqa: BLE001 - reported, not swallowed
++            errors.append(exc)
++
++    threads = [threading.Thread(target=queue, args=(i,)) for i in range(8)]
++    for t in threads:
++        t.start()
++    for t in threads:
++        t.join(timeout=20)
++
++    assert errors == [], errors
++    assert len(publisher.get_queue()) == 8
++
++
++def test_the_write_is_still_atomic(tmp_path):
++    """The guard is added to what atomic_write_json already did, not instead of
++    it. A reader must still never see half a file."""
++    store = tmp_path / "s.json"
++    atomic_write_json(store, {"a": 1})
++    assert json.loads(store.read_text()) == {"a": 1}
++    leftovers = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
++    assert leftovers == [], leftovers
+-- 
+2.43.0
+

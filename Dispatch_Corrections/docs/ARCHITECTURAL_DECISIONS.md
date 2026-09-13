@@ -218,3 +218,89 @@ enforced two different gates.
 
 The number went from 94.74% to **91.39%** because it is measuring more, more
 strictly, across more code. *(5, 10)*
+
+---
+
+# Phase 3
+
+## ADR-18 · A capacity stop is built from the load, and nothing else is invented
+
+`dispatch/capacity.py` has evaluated stop sequences and appointment windows
+since it was written, and none of it had ever run: `scoring.assess_capacity()`
+called the engine without `stops=`. Unreachable code with passing unit tests.
+
+Building the constructor was the easy half. The decision is what it refuses.
+
+The engine treats a naive timestamp as BLOCKING, which is right — `06:00` is not
+an instant, and a truck cannot be judged against an appointment nobody can place
+on a clock. Dispatch's own `pickup_datetime` is routinely naive. So the obvious
+implementation, passing the field through, would have converted a correct
+refusal into a false alarm on nearly every load, and the feature would have been
+switched off within a week. Values go through `timestamps.normalize()` first,
+which resolves a bare local time against the configured operating timezone and
+*records that it did so*.
+
+Three more refusals, each blocking an answer that would have looked right:
+
+- A single recorded time is an appointment **time**, not a window. Setting
+  `end = start` yields a "complete" window that demands arrival to the second.
+- An unknown distance is `None`, not `0.0`. `scoring._requested_drive_hours()`
+  answers `0.0`, which is correct for a physical-capacity request and wrong
+  here: zero drive hours claims the truck arrives the instant it leaves, and the
+  engine would project arrivals from it and call tight appointments comfortable.
+- An unrecorded dwell stays `None`. Zero makes every appointment reachable.
+
+The consequence is that the forward walk is **off** for every load in Dispatch
+today, because no load carries a distance and no stop carries a dwell. That is
+the honest state, it is reported as a gap in plain language on the load, and it
+turns itself on with no code change the day either is recorded.
+
+No intermediate stops are derived. That would be route planning, and `CLAUDE.md`
+§5.5 forbids a second scheduling system. *(2, 4, 5, 7, 9)*
+
+## ADR-19 · The JSON stores get a lock, not a migration
+
+Phase 2 recorded eleven stores that lose a concurrent update and declined to fix
+it, on the grounds that fixing it properly meant moving them into SQLite.
+
+Measured: twelve processes each queuing one publisher action, and the store held
+**two**. Ten records gone, nothing corrupt, nothing anywhere saying so. Dispatch
+runs the portal and the launcher as two processes against one folder, so this is
+reachable, not theoretical.
+
+Two ways to fix it, and the migration is the worse one. Moving eleven stores
+into SQLite is a schema, a data migration per store, and a rewrite of every
+reader — a large change whose risk is concentrated in exactly the records it is
+meant to protect. The defect is not that the data is in JSON. It is that the
+read and the write are not held together.
+
+`guarded()` holds a cross-process lock across the whole read-modify-write, one
+line above each of 41 mutating functions, with no call site restructured and no
+data moved. It mirrors the `@atomic` decorator the service layer already uses,
+so the codebase gains no second idiom for the same idea.
+
+The lock file sits beside the store rather than being it: `os.replace` swaps the
+file on every write, so a lock held on its inode stops describing the file that
+is there, and a store that does not exist yet still needs a lock, because the
+first two writers race hardest.
+
+What this deliberately does not buy: transactions *across* stores. An operation
+touching two stores can still be interrupted between them. Only the SQLite-backed
+`@atomic` gives that, and these stores are not in SQLite. Stated rather than
+implied. *(5, 6, 7)*
+
+## ADR-20 · The package proves it arrived, rather than asking to be trusted
+
+This build cannot reach `D:\Claude-Build` — it runs in a container with no `D:`
+drive. The work is therefore packaged for transfer, and the packaging is written
+on the assumption that a copy can go wrong quietly.
+
+`ROOT_MANIFEST.md` lists every file with its SHA-256, and
+`verify_manifest.py` checks it: dependency-free, short enough to read before
+trusting, and separating CHANGED from MISSING from EXTRA because those mean
+different things. A copy that picked up a stray file is not the same failure as
+one that dropped a record.
+
+It was tested in both directions — exit 1 on a tampered file, exit 0 on a clean
+tree — because a verifier that cannot fail proves nothing, which is the same
+argument as the proof-path repair in Phase 2. *(1, 5, 8, 10)*

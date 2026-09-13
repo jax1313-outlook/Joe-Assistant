@@ -38,29 +38,60 @@ in either repository claims otherwise.
 | A local SharePoint or Teams substitute | A folder on this laptop is not a shared site, and writing a file does not tell anybody. Both report `ABSENT`. |
 | Locking on the remaining JSON stores | Only the **lockout counter** moved to SQLite. Eleven other stores in `portal/models/` still lose a concurrent update, and `portal/models/__init__.py` still says so. See §5. |
 
-## 4. The capacity engine is wired, and thinly exercised
+## 4. The capacity engine is wired, and its stops are now built  *(Phase 3)*
 
-`DynamicCapacity` can now be reached: a profile per truck, a load-page panel, an
-API. What is exercised is the **physical** dimension — weight, volume, linear
-feet, pallets.
+`DynamicCapacity` can be reached: a profile per truck, a load-page panel, an
+API. Phase 2 exercised the **physical** dimension only, and recorded that
+"the stop-sequence and appointment-window paths take a `CapacityStop`, and
+nothing in production constructs one. That is the next piece of this work."
 
-The stop-sequence and appointment-window paths take a `CapacityStop`, and nothing
-in production constructs one. `assess_load_capacity()` evaluates the load against
-the asset; it does not build a route. That is the next piece of this work and it
-is not in this series.
+It is built. `dispatch/load_stops.py` constructs the load's own pickup and
+delivery stops and `scoring.assess_capacity()` passes them, so the engine's
+stop-sequence and appointment checks run against real loads instead of sitting
+unreachable behind passing unit tests.
 
-## 5. Eleven JSON stores still lose concurrent updates
+Two checks now fire with no new data recorded at all: a delivery whose
+appointment opens before its pickup, and a window that closes before it opens.
+Both are BLOCKING.
 
-`portal/models/atomic_write_json` is honest about it and nothing about that
-changed. What changed is that the one field where a lost update was a **security**
-failure — the lockout counter — moved to SQLite.
+**Still not built, and deliberately:**
 
-The remaining stores hold conflict notices, publisher queue entries, library
-records, the sandbox and the archive index. A lost update there costs a record,
-not a lockout, and on a single-operator system concurrency is rare. It is a real
-limitation and it is stated rather than fixed, because fixing it properly means
-moving those stores into SQLite and that is a larger change than this mission's
-findings support.
+| Not built | Why |
+|---|---|
+| Intermediate stops | A load records a pickup and a delivery. Deriving stops between them is route planning, and `CLAUDE.md` §5.5 forbids a second scheduling system. |
+| A projected arrival on today's data | The forward walk needs a drive time and a dwell. No load carries `distance_miles` -- `Load` has no such field -- and no stop records a dwell. Both are `None` rather than `0.0`, so the engine declines rather than reporting every appointment as comfortably reachable. |
+
+The walk turns itself on with no code change the day a distance is recorded and
+`DISPATCH_DEFAULT_DWELL_HOURS` is set. Demonstrated: with 600 miles and a
+1.5-hour dwell it projects both arrivals and reports a delivery window five and
+a half hours out of reach.
+
+## 5. The JSON stores no longer lose a concurrent update  *(Phase 3)*
+
+Phase 2 left this stated rather than fixed, on the grounds that fixing it
+properly meant moving eleven stores into SQLite. It did not.
+
+Measured before the fix: **twelve processes each queued one publisher action and
+the store held two.** Ten records gone, nothing corrupt, nothing anywhere saying
+so. `atomic_write_json` guaranteed no reader sees half a file; it could not stop
+two writers overwriting each other, because the damage is done before either
+write begins.
+
+`store_lock()` and the `guarded()` decorator hold an exclusive cross-process
+lock across the whole read-modify-write. Applied to all **41** mutating
+functions across all **11** stores. After: twelve of twelve, repeatably.
+
+The decorator was chosen over restructuring because every mutator already reads,
+edits and saves -- one line above each fixes the race without touching 138 call
+sites and inventing 138 chances to get it wrong. It mirrors the `@atomic`
+decorator the service layer already uses, so the codebase has one idiom for this
+rather than two.
+
+**What this does not do:** it does not make the stores transactional across
+*different* stores. An operation that writes a conflict notice and a publisher
+entry can still be interrupted between the two. Only the service layer's
+`@atomic`, which is SQLite-backed, gives that, and these stores are not in
+SQLite.
 
 ## 6. `verify_money_integrity` reports; it does not correct
 
