@@ -120,7 +120,10 @@ def main() -> int:
     outbox = step("read_outbox")
     assert outbox["eml_files"] and outbox["eml_files"][0]["to"] == "ops@l1truck.com"
     assert outbox["eml_files"][0]["body_has_template"]
-    assert outbox["transport"].get("delivering") is False
+    # Nothing delivered: the transport says so where it can report, and every send result says so.
+    assert outbox["transport"].get("delivering") is not True
+    assert all(str(r.get("result", "")).startswith("not sent") for r in composed["send_results"]), composed["send_results"]
+    assert all(str(ws) in box for box in outbox["outboxes"] if Path(box).exists()), outbox["outboxes"]
 
     record = step("library_record")
     assert ("PUBLISHER", "RETURNED") in [tuple(r) for r in record["retrievals_by_role"]]

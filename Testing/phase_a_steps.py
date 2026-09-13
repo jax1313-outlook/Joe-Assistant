@@ -187,18 +187,37 @@ def compose(ws: Path) -> dict:
 
 
 def read_outbox(ws: Path) -> dict:
-    from dispatch.transport import selection
+    """Read back what the transport wrote, on either Dispatch line.
 
+    `sandbox/phase2-corrections` has `dispatch.transport` and reports the transport's status;
+    `joe/capture-to-card` has `dispatch.mail` with its own outbox and no status module. Both
+    outboxes are searched, and a missing status is reported as missing rather than invented.
+    """
     from cin_lite import email_delivery
 
-    outbox = sorted(Path(email_delivery.outbox_dir()).rglob("*.eml"))
+    outboxes = {Path(email_delivery.outbox_dir() if hasattr(email_delivery, "outbox_dir")
+                     else email_delivery._OUTBOX)}
+    try:
+        from dispatch import mail
+
+        outboxes.add(Path(getattr(mail, "_OUTBOX")))
+    except (ImportError, AttributeError):
+        pass
+    try:
+        from dispatch.transport import selection
+
+        transport = selection.outbound_status()
+    except ImportError:
+        transport = {"status": "not reported: this Dispatch has no dispatch.transport", "delivering": None}
+    outbox = sorted({p for box in outboxes if box.exists() for p in box.rglob("*.eml")})
     messages = []
     for path in outbox:
         text = path.read_text(encoding="utf-8", errors="replace")
         headers = {k: v for k, v in (line.split(": ", 1) for line in text.splitlines()[:20] if ": " in line)}
         messages.append({"file": path.name, "to": headers.get("To"), "subject": headers.get("Subject"),
                          "body_has_template": "CLOSEOUT — Load" in text})
-    return {"eml_files": messages, "transport": selection.outbound_status(), "pid": os.getpid()}
+    return {"eml_files": messages, "outboxes": sorted(str(b) for b in outboxes), "transport": transport,
+            "pid": os.getpid()}
 
 
 def library_record(ws: Path) -> dict:
