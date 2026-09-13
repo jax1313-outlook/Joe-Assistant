@@ -33,3 +33,18 @@ SUITE_ROOTS = (
 for path in SUITE_ROOTS:
     if path.is_dir() and str(path) not in sys.path:
         sys.path.insert(0, str(path))
+
+#: The Dispatch checkout, if it happens to sit beside this one.
+#:
+#: Workers/tests/test_worker_host.py proves the workers perform their duties
+#: against a *real* Dispatch rather than a test double, and it can only do that
+#: where Dispatch is importable. Without this, those tests skip -- which is
+#: honest but proves nothing, and "passing tests, nothing exercised" is the
+#: exact failure the host was written to fix.
+#:
+#: Guarded, because Dispatch is a separate repository and may not be here. Its
+#: absence skips those tests cleanly rather than breaking the suite.
+DISPATCH_ROOT = ROOT.parent / "Dispatch"
+
+if DISPATCH_ROOT.is_dir() and str(DISPATCH_ROOT) not in sys.path:
+    sys.path.append(str(DISPATCH_ROOT))

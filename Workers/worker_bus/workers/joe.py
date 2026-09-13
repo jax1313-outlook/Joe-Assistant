@@ -83,7 +83,22 @@ class JoeWorker:
                 "Joe reads back what is recorded. He does not fill in a gap out loud.",
             )
 
-        from conversation.readback import read_back_load
+        try:
+            from conversation.readback import read_back_load
+        except ImportError as exc:
+            # The conversation layer is a separate package and may simply not
+            # be installed here. That is UNCONFIGURED -- a thing not set up --
+            # not UNAVAILABLE, which means something that should be reachable
+            # is not. A raw ModuleNotFoundError in `detail` is a traceback, not
+            # a status, and a driver reading it learns nothing.
+            return WorkerResponse(
+                worker=self.worker_id, capability=request.capability,
+                status="UNCONFIGURED", correlation_id=request.correlation_id,
+                detail=(
+                    "Joe's conversation layer is not installed on this machine, "
+                    f"so he cannot read a load back ({exc})."
+                ),
+            )
 
         spoken = read_back_load(load, aspect=request.payload.get("aspect", ""))
         return WorkerResponse(
@@ -122,7 +137,17 @@ class JoeWorker:
         )
 
     def _propose(self, request: WorkerRequest) -> WorkerResponse:
-        from conversation.capture import propose_change
+        try:
+            from conversation.capture import propose_change
+        except ImportError as exc:
+            return WorkerResponse(
+                worker=self.worker_id, capability=request.capability,
+                status="UNCONFIGURED", correlation_id=request.correlation_id,
+                detail=(
+                    "Joe's conversation layer is not installed on this machine, "
+                    f"so he cannot turn what the driver said into a proposal ({exc})."
+                ),
+            )
 
         proposal = propose_change(
             heard=request.payload.get("heard", ""),
