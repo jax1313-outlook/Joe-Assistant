@@ -74,7 +74,7 @@ class TestStatus:
         assert main(["--json", "status"]) == 0
         report = json.loads(capsys.readouterr().out)
         assert set(report) == {
-            "dispatch_readable", "plugin_present", "library_present", "workers"
+            "dispatch_readable", "plugin_present", "library_present", "library_persistent", "workers"
         }
         assert {w["worker"] for w in report["workers"]} == {
             "INTELLIGENCE", "PUBLISHER", "JOE", "LIBRARY"

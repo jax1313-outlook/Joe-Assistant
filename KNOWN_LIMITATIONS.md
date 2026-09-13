@@ -260,6 +260,20 @@ run and unusable across runs. Anything that needs templates to survive a
 restart needs the Library to gain storage first. Until then, treat an empty
 Library after a restart as correct behaviour, not a bug.
 
+> **Update 2026-09-13 — closed when the catalog is configured.** Mike Zachary
+> authorised the Library v2 build. The Library repository now has a persistent
+> SQLite catalog (`dispatch_library.catalog`, schema version 2). With
+> `DISPATCH_LIBRARY_CATALOG` set, `library_service()` holds that catalog, and
+> `library_persistent()` / `worker_bus status --json` say so. Phase A now passes
+> as separate processes (`Testing/phase_a_separate_processes.py`,
+> `TEST_EVIDENCE.md` §10).
+>
+> **Still true:** with `DISPATCH_LIBRARY_CATALOG` unset, the Library is the
+> in-memory shelf and forgets on exit — reported, not hidden. A Library asset
+> that is current but REVIEW_DUE is now `UNAVAILABLE` to the bus, and Publisher
+> reports `TEMPLATE_NOT_USABLE` rather than counting it present; before this, any
+> non-ABSENT answer counted as a template.
+
 ## 15. Two things that were wrong and are now right  *(Phase A)*
 
 Both were found by running the walkthrough, and both had passing tests over

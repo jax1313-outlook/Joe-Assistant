@@ -34,6 +34,7 @@ tuple.
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,9 +91,18 @@ def ensure_plugin_importable() -> bool:
     return True
 
 
-#: Where the Library repository sits, if it is checked out beside this one.
-#: Joe-Assistant/Workers/worker_bus/host.py -> ... -> work/ -> Library/src/
+#: Where the Library repository's `src/` is. `DISPATCH_LIBRARY_SRC` names it; without that, a
+#: checkout beside this one: Joe-Assistant/Workers/worker_bus/host.py -> ... -> work/ -> Library/src/
 _LIBRARY_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "Library" / "src"
+
+#: The persistent Library catalog. When set, the bus holds the catalog-backed Library and
+#: everything placed in it survives the process. Unset, the Library is the in-memory shelf.
+LIBRARY_CATALOG_ENV = "DISPATCH_LIBRARY_CATALOG"
+
+
+def _library_root() -> Path:
+    named = os.environ.get("DISPATCH_LIBRARY_SRC", "").strip()
+    return Path(named) if named else _LIBRARY_ROOT
 
 
 def ensure_library_importable() -> bool:
@@ -105,10 +115,11 @@ def ensure_library_importable() -> bool:
 
     Returns whether it is present.
     """
-    if not _LIBRARY_ROOT.is_dir():
+    root = _library_root()
+    if not root.is_dir():
         return False
-    if str(_LIBRARY_ROOT) not in sys.path:
-        sys.path.insert(0, str(_LIBRARY_ROOT))
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
     return True
 
 
@@ -119,18 +130,17 @@ _LIBRARY_SERVICE = None
 def library_service():
     """The process's `LibraryService`, or None if the Library is not here.
 
-    **One service per process, not one per bus.** `LibraryService()` builds a
-    fresh `ObjectRegistry` -- a dict -- every time it is called, so two services
-    in one process are two different shelves: a template ingested through one is
-    invisible to the other. `build_bus()` is called more than once in a single
-    run (the CLI builds one per command), so handing each bus its own service
-    made PUBLISHER report TEMPLATE_NOT_IN_LIBRARY for a template the caller had
-    just ingested. Caching it is what makes "the real Library" mean one shelf.
+    **One service per process, not one per bus.** Two services in one process
+    must never be two shelves: a template ingested through one would be
+    invisible to the other, which is the defect Phase A found on its first run.
 
-    The registry is still **in memory**: nothing is written to disk, so the
-    shelf empties when the process exits. That limit is real and unfixed here --
-    a template ingested in one command is not there for the next one. It is
-    recorded in KNOWN_LIMITATIONS.md, not worked around.
+    **Persistent when configured.** With `DISPATCH_LIBRARY_CATALOG` set, this is
+    the catalog-backed Library (`dispatch_library.catalog`, schema version 2) bound
+    to `DISPATCH_MEMORY_ROOT`, and a template accepted in one command is there for
+    the next one -- the limit KNOWN_LIMITATIONS.md section 14 recorded is closed
+    for that configuration. Without it, the Library is the in-memory shelf and
+    still empties when the process exits, which is reported, not hidden:
+    `library_persistent()` says which one this process holds.
     """
     global _LIBRARY_SERVICE
     if _LIBRARY_SERVICE is not None:
@@ -138,11 +148,23 @@ def library_service():
     if not ensure_library_importable():
         return None
     try:
-        from dispatch_library.service import LibraryService
-    except Exception:  # noqa: BLE001 - absence is a status, never a crash
+        if os.environ.get(LIBRARY_CATALOG_ENV, "").strip():
+            from dispatch_library.catalog import open_configured_library
+
+            _LIBRARY_SERVICE = open_configured_library(consumer_role="WORKER_BUS")
+        else:
+            from dispatch_library.service import LibraryService
+
+            _LIBRARY_SERVICE = LibraryService()
+    except ImportError:  # absence is a status, never a crash
         return None
-    _LIBRARY_SERVICE = LibraryService()
     return _LIBRARY_SERVICE
+
+
+def library_persistent() -> bool:
+    """Whether this process's Library remembers across processes."""
+    service = library_service()
+    return service is not None and hasattr(service, "catalog")
 
 
 class DispatchUnavailable(RuntimeError):
@@ -263,6 +285,7 @@ def describe() -> dict:
         "dispatch_readable": dispatch_available(),
         "plugin_present": ensure_plugin_importable(),
         "library_present": ensure_library_importable(),
+        "library_persistent": library_persistent(),
         # bus.roster() is the bus's own public answer to "who is registered and
         # what can they do". Reaching into its private dict to build a second
         # version of that would be two answers to one question.

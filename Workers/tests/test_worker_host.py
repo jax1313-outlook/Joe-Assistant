@@ -397,6 +397,99 @@ class TestTheLibraryIsOneShelf:
             pytest.skip("Library repo is not on this machine")
         assert build_bus().get("LIBRARY").status() == "LIVE"
 
+    def test_a_persistent_library_when_the_catalog_is_configured(self, monkeypatch, tmp_path):
+        import worker_bus.host as host
+
+        if not host.ensure_library_importable():
+            pytest.skip("Library repo is not on this machine")
+        monkeypatch.setenv("DISPATCH_LIBRARY_CATALOG", str(tmp_path / "catalog.db"))
+        monkeypatch.setenv("DISPATCH_MEMORY_ROOT", str(tmp_path / "Memory"))
+        monkeypatch.setattr(host, "_LIBRARY_SERVICE", None)
+        try:
+            assert host.library_persistent() is True
+            assert host.describe()["library_persistent"] is True
+        finally:
+            service = host._LIBRARY_SERVICE
+            monkeypatch.setattr(host, "_LIBRARY_SERVICE", None)
+            if service is not None:
+                service.close()
+
+    def test_a_template_placed_in_one_process_is_found_in_the_next(self, tmp_path):
+        import os
+        import subprocess
+        import sys
+
+        import worker_bus.host as host
+
+        if not host.ensure_library_importable():
+            pytest.skip("Library repo is not on this machine")
+        env = dict(os.environ, DISPATCH_LIBRARY_CATALOG=str(tmp_path / "catalog.db"),
+                   DISPATCH_MEMORY_ROOT=str(tmp_path / "Memory"),
+                   PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
+        place = (
+            "from worker_bus.host import library_service\n"
+            "library_service().ingest_human_document('TPL-RESTART', 'Templates', 'Restart', 'body',\n"
+            "    'Certification Operator', object_type='FORM_TEMPLATE')\n"
+        )
+        fetch = (
+            "from worker_bus.host import build_bus\n"
+            "from worker_bus.contracts import WorkerRequest\n"
+            "r = build_bus().ask('LIBRARY', WorkerRequest(capability='fetch_asset', payload={'asset_id': 'TPL-RESTART'},\n"
+            "    requested_by='OPERATOR'))\n"
+            "print(r.status, r.artifacts['asset']['version'], r.artifacts['asset']['accepted_by'])\n"
+        )
+        for code in (place, fetch):
+            done = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
+                                  stdin=subprocess.DEVNULL, timeout=120)
+            assert done.returncode == 0, done.stderr
+        assert done.stdout.split() == ["LIVE", "1", "Certification", "Operator"]
+
+    def test_a_review_due_template_is_not_usable_by_publisher(self, monkeypatch, tmp_path):
+        import worker_bus.host as host
+
+        if not host.ensure_library_importable():
+            pytest.skip("Library repo is not on this machine")
+        from dispatch_library.catalog import open_library
+
+        from worker_bus.workers.library import LibraryWorker
+        from worker_bus.workers.publisher import PublisherWorker
+
+        library = open_library(tmp_path / "catalog.db")
+        library.ingest_human_document("TPL-EXPIRING", "Templates", "Expiring", "body", "Certification Operator",
+                                      object_type="FORM_TEMPLATE")
+        library.set_lifecycle("TPL-EXPIRING", "REVIEW_DUE")
+
+        class _Reader:
+            def get_load(self, load_id):
+                return {"load_id": load_id}
+
+            def get_rate_confirmation(self, load_id):
+                return {"rate_amount": 1.0}
+
+            def list_pods(self, load_id):
+                return [{"pod_id": "POD-1"}]
+
+            def list_evidence(self, load_id):
+                return [{"evidence_id": "E-1"}]
+
+        from worker_bus.bus import WorkerBus
+
+        bus = WorkerBus()
+        bus.register(PublisherWorker(reader=_Reader()))
+        bus.register(LibraryWorker(service=library))
+        # From the operator: the bus does not let a request claiming to be PUBLISHER call LIBRARY
+        # directly; that hop only happens inside Publisher's own work, as check_readiness shows below.
+        fetched = bus.ask("LIBRARY", WorkerRequest(capability="fetch_asset", payload={"asset_id": "TPL-EXPIRING"},
+                                                   requested_by="OPERATOR"))
+        assert fetched.status == "UNAVAILABLE"
+        assert [f.code for f in fetched.findings] == ["ASSET_REVIEW_DUE"]
+        readiness = bus.ask("PUBLISHER", WorkerRequest(capability="check_readiness",
+                                                       payload={"load_id": "L-1", "template_id": "TPL-EXPIRING"},
+                                                       requested_by="OPERATOR"))
+        assert "TEMPLATE_NOT_USABLE" in {f.code for f in readiness.findings}
+        assert readiness.detail != "Ready to assemble."
+        library.close()
+
     def test_an_injected_shelf_still_wins(self):
         """Tests and hosts that pass their own assets must not be handed the
         process Library instead -- an explicit argument is a decision."""

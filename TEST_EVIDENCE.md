@@ -487,4 +487,57 @@ python Dispatch_Corrections/verify_manifest.py
 
 # Phase A, end to end (§8)
 PYTHONPATH=/path/to/Dispatch python Testing/phase_a_walkthrough.py
+
+# Phase A across separate processes, persistent Library (§10)
+python Testing/phase_a_separate_processes.py --library-src <Library>/src --dispatch <Dispatch>
 ```
+
+---
+
+## 10. Phase A across separate processes — the Library remembers
+
+**Authorised by Mike Zachary, 2026-09-13 (Library v2 build).** Run on the operator's Windows 11
+machine, Python 3.14.5, SQLite 3.50.4, against Library `6452f3b` and Dispatch
+`sandbox/phase2-corrections` `9669364`.
+
+`Testing/phase_a_separate_processes.py` runs every step of §8 as its own Python process against
+the persistent Library catalog (`DISPATCH_LIBRARY_CATALOG`). Nothing is shared between steps but
+what the stores remember. Each run uses a fresh certification workspace — its own catalog,
+Dispatch database, Archive, memory root and logs — and approvals are by the test identity
+"Phase A Certification Operator", never Mike.
+
+| Step (process) | Result |
+|---|---|
+| `place_templates` | Two FORM_TEMPLATE objects CURRENT v1.0 in the catalog. `PUBLISHER` as approver **refused**; a placement with no object type **refused** with a MISSING_FIELD notice |
+| `python -m dispatch_library.catalog list` | Both templates present in a new process |
+| `seed_load` | One complete load: rate 2850.00, POD, 1 evidence item, 4 milestones |
+| `python -m worker_bus ask PUBLISHER check_readiness` | `LIVE`, "Ready to assemble." — the template placed two processes earlier was found |
+| `assemble` | Without authorisation `ABSENT` under `human_authorization_required`; with a recorded checkpoint milestone `LIVE`, review required |
+| `review_due_block` | Template set REVIEW_DUE: LIBRARY answers `UNAVAILABLE` / `ASSET_REVIEW_DUE`, Publisher reports `TEMPLATE_NOT_USABLE`. Renewed by a named person: usable again, EXPIRED notice closed in that person's name |
+| `compose` | Template read `current_for_external_use` as PUBLISHER; COMI withheld profit, margin, expenses, internal note; `PUBLISHER` as submitter refused; submitted by the test operator |
+| `read_outbox` | One RFC 5322 `.eml`, `To: ops@l1truck.com`, body is the rendered template, **inside the workspace** |
+| `library_record` | Retrieval events by role: PUBLISHER RETURNED, PUBLISHER BLOCKED_REVIEW_DUE, WORKER_BUS RETURNED |
+
+Seven distinct step processes plus two CLI processes. Worker suites: **147 passed, 55 subtests
+passed, 0 skipped** (`-o addopts=""`).
+
+### Defects this run found
+
+1. **A present-but-blocked template counted as present.** `PublisherWorker` treated any answer
+   that was not `ABSENT` as a template. Fixed: only an answer carrying the asset counts; anything
+   else is `TEMPLATE_NOT_USABLE`. `LibraryWorker` now answers `UNAVAILABLE` for REVIEW_DUE.
+2. **A renewed asset kept its EXPIRED notice open** (Library `6452f3b`).
+3. **The first run wrote outside its workspace.** It inherited `DISPATCH_ARCHIVE_PATH=D:\Archive\CIN`
+   from the operator's user environment, and the CIN outbox wrote one test `.eml`
+   (`completion-LOAD-20260913-C5B1AF82-ops@l1truck.com.eml`, 442 bytes) to
+   `D:\Archive\CIN\Outbox`. It was found by auditing the real roots after the run, moved — not
+   deleted — into that run's workspace, and the orchestrator now drops every inherited
+   `DISPATCH_*` / `PORTAL_*` variable and asserts no path points outside the workspace. Nothing
+   was delivered; SMTP was not configured.
+
+### What it does not establish
+
+- **No email was delivered to anyone.** Transport `SIMULATED`, `delivering: false`.
+- **Nothing ran against Microsoft.** Phase B is still Mike's to start.
+- **Not the operator's live Library.** The certification catalog is a workspace file; the real
+  catalog holds no placements, because accepting a document needs Mike.

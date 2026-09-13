@@ -125,6 +125,7 @@ class PublisherWorker:
                 requested_by=self.worker_id,
                 correlation_id=request.correlation_id,
             ))
+            asset = answer.artifacts.get("asset") if answer.artifacts else None
             if answer.status == "ABSENT":
                 findings.append(Finding(
                     "TEMPLATE_NOT_IN_LIBRARY",
@@ -132,8 +133,20 @@ class PublisherWorker:
                     "Publisher uses approved assets. It does not write a replacement.",
                     confidence="ABSENT", source_ref=f"library:{template_id}",
                 ))
+            elif answer.status not in ("LIVE", "SIMULATED") or not asset:
+                # Only an answer that carries the asset is an asset. A present-but-blocked
+                # template (review due) used to fall into the else branch below and count as
+                # present; any answer without an asset now says why instead.
+                reason = next((f.summary for f in answer.findings), f"Library answered {answer.status}.")
+                findings.append(Finding(
+                    "TEMPLATE_NOT_USABLE",
+                    f"Template {template_id!r} cannot be used: {reason}",
+                    "Publisher uses approved, usable assets. It does not substitute one.",
+                    confidence=answer.status, source_ref=f"library:{template_id}",
+                    requires_human_review=True,
+                ))
             else:
-                parts["template"] = answer.artifacts.get("asset", {})
+                parts["template"] = asset
 
         blocking = [f for f in findings if f.requires_human_review]
         return WorkerResponse(

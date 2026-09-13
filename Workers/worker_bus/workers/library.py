@@ -47,17 +47,34 @@ class LibraryWorker:
     # whether the answer came from the real Library or the in-memory shelf.
 
     def _asset(self, asset_id: str) -> dict | None:
-        """One CURRENT object, as a plain dict, or None.
+        """One CURRENT object that may be used, as a plain dict, or None.
 
         The real Library answers with a `LibraryObject` carrying its version,
         status, accepting authority and collection. Those are not decoration:
         Publisher's refusal to use an unapproved template rests on them, so they
         travel rather than being flattened away.
         """
+        return self._lookup(asset_id)[0]
+
+    def _lookup(self, asset_id: str, requested_by: str = "LIBRARY_WORKER") -> tuple[dict | None, str]:
+        """(asset, outcome) with outcome RETURNED, MISSING or BLOCKED_REVIEW_DUE.
+
+        A persistent Library can hold an asset that is current and still must
+        not be used outside the building: a credential past its review date.
+        That is BLOCKED_REVIEW_DUE, and the asset is withheld. Answering ABSENT
+        would be a lie about the shelf; answering with the asset would put an
+        expired credential in a broker packet.
+        """
+        if self.service is not None and hasattr(self.service, "availability"):
+            answer = self.service.availability(asset_id, purpose="worker bus fetch_asset",
+                                               consumer_role=requested_by or "LIBRARY_WORKER")
+            obj = answer["object"]
+            return (obj.to_dict() if obj is not None else None), answer["outcome"]
         if self.service is not None:
             obj = self.service.current(asset_id)
-            return obj.to_dict() if obj is not None else None
-        return self.assets.get(asset_id)
+            return (obj.to_dict(), "RETURNED") if obj is not None else (None, "MISSING")
+        asset = self.assets.get(asset_id)
+        return asset, ("RETURNED" if asset is not None else "MISSING")
 
     def _shelf(self, kind: str) -> dict:
         """Everything currently on the shelf, optionally one collection of it."""
@@ -96,7 +113,20 @@ class LibraryWorker:
     def handle(self, request: WorkerRequest, deps) -> WorkerResponse:
         if request.capability == "fetch_asset":
             asset_id = request.payload.get("asset_id", "")
-            asset = self._asset(asset_id)
+            asset, outcome = self._lookup(asset_id, request.requested_by)
+            if outcome == "BLOCKED_REVIEW_DUE":
+                return WorkerResponse(
+                    worker=self.worker_id, capability=request.capability,
+                    status="UNAVAILABLE", correlation_id=request.correlation_id,
+                    findings=(Finding(
+                        "ASSET_REVIEW_DUE",
+                        f"{asset_id!r} is in the Library and is due for review.",
+                        "A current asset past its review date is blocked from external use "
+                        "until a person renews or replaces it.",
+                        confidence="UNAVAILABLE", requires_human_review=True,
+                        source_ref=f"library:{asset_id}",
+                    ),),
+                )
             if asset is None:
                 return WorkerResponse(
                     worker=self.worker_id, capability=request.capability,
