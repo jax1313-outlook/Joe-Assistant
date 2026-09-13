@@ -360,10 +360,17 @@ wrong, which is the more useful half of the story.
 
 - **Nothing has run on Mike's laptop.** Not Dispatch, not the launcher, not the
   portal, not the worker bus.
-- **No Microsoft call has been made from any repository.** Every M365 capability
-  is `UNCONFIGURED`. The adapters are exercised against recorded response shapes
-  through injected openers, which proves request shapes, paging, delta handling,
-  retry rules and refusals — and proves nothing about connectivity.
+- **No Microsoft call has been made by the M365 layer built here.** Every
+  capability in that layer is `UNCONFIGURED`. The adapters are exercised against
+  recorded response shapes through injected openers, which proves request shapes,
+  paging, delta handling, retry rules and refusals — and proves nothing about
+  connectivity. *Corrected 2026-09-13: this line previously read "from any
+  repository", which was false. `Assistant_Plugin/proof/EMAIL_LAYER_PROOF.md`
+  (2026-08-26, live Outlook Desktop profile) and `RESEARCH_PROOF.md` (2026-08-25,
+  8 Copilot attributions) are live Microsoft calls preserved in this repository.
+  The most recent record, `COPILOT_LIVE_PROOF.md` (2026-09-12), reads BLOCKED —
+  no tenant id, so current connectivity is separately unestablished. See
+  `KNOWN_LIMITATIONS.md` §2.*
 - **Joe's voice has never heard anything.** The text engines report `SIMULATED`.
 - **The benchmark is one container.** 7,786 ms → 47 ms at 2,000 loads was
   measured here. `tests/test_dashboard_scaling.py` pins the *shape* of the

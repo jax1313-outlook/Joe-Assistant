@@ -7,7 +7,7 @@ Check it with:
 
     python Dispatch_Corrections/verify_manifest.py
 
-**452 files, 4,988,818 bytes.**
+**452 files, 4,990,650 bytes.**
 
 Excluded: `.git/`, `__pycache__/`, `.pytest_cache/`, compiled Python, the
 archive of this tree, this file itself, and everything `.gitignore` names --
@@ -430,7 +430,7 @@ which is where the runtime token cache and the memory records live.
 | `Governance/tools/write_pointers.py` | 5252 | `b5f0029de465647dbf21b11ad38f248887914ca189eeecd46b1345f7ea2f6a91` |
 | `Governing_Inputs/LEVEL1_ASSISTANT_AGENT_CONFIG_v1.txt` | 6850 | `bbb82cd68f4fc360a93dc13ab1ff232411cc2cc76da3ade8fab3d77aa1155127` |
 | `Governing_Inputs/LEVEL1_ASSISTANT_BUILD_PACKAGE_v1.docx` | 42016 | `b59a11a1e565095465b1dcf3a0544181767a98fe1d50d91cf02e8fe5cdb043f5` |
-| `KNOWN_LIMITATIONS.md` | 12574 | `5a9e913ece869cc4ca8cde3e1c6bc0b3eb2c873131e271f777531a68dd8f4eea` |
+| `KNOWN_LIMITATIONS.md` | 13900 | `379180a93c8deb28dfeeb5504e1559bab32c642cfa340955eba6665feff36d5e` |
 | `MERGE_PLAN.md` | 9126 | `9b9fb7a016184a4ffe4badf67867de73f37c9b69796652afb028e99a359b05e7` |
 | `PHASE_2_DELIVERABLE.md` | 3809 | `ffb1c9ddc152717954529a8ea24fbd80c45fd835201f169b78836d18132b9813` |
 | `Play-Pen/jules_session_12863749728267333928.zip` | 962609 | `07a063f4a17268401cfe909394f5c656677c43745b85219059038e0e66df2256` |
@@ -442,7 +442,7 @@ which is where the runtime token cache and the memory records live.
 | `Sandbox/active/SBX-20260824-204540-FB57EE.json` | 862 | `a6395274f2a519d6354a738bbf430ba6a2eedfbea7f26f7c64a4f0a826089cb7` |
 | `Sandbox/deleted/SBX-20260824-204540-B579BA.json` | 790 | `a9a269e8c0b3be16d477a477debf5da83849ad6b53ac34fc03c65e52489c7fe9` |
 | `Screens` | 1 | `01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b` |
-| `TEST_EVIDENCE.md` | 18370 | `0c363918503599db8b65dda77a99513111b729c6eb134a8aab3e7f7c25a07f71` |
+| `TEST_EVIDENCE.md` | 18876 | `7ba91b58df9cea0c472190ad9daa64e9e302fb17186eddf184df7b44c008a8e0` |
 | `TRANSFER_TO_D_DRIVE.md` | 4023 | `bd49cc9d55bfa69cc22b10a3170636d4d88f237f7a9e717eba8b871f7ffc802d` |
 | `Testing/LOCAL_PROOF_REPORT_v1.md` | 8404 | `67b6d336b114d5343b5e099dc67c8cdb5e2efe619ed1f252e8e9973d9f3dd30a` |
 | `Testing/SANDBOX_ENGINE_TEST_REPORT_v1.md` | 9227 | `739d9d3e2bfcc819230cc418f30e4f8dea1cd1fd5f915289843273bf49d0af51` |

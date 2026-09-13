@@ -16,16 +16,36 @@ Windows laptop, finds the `D:` drive, or keeps a load across a restart.
 The twenty-step proof path now *runs*, which it did not before. It has not been
 *walked*.
 
-## 2. No Microsoft call has been made from any repository
+## 2. No Microsoft call has been made by the adapter layer built here
 
-Every Microsoft capability is `UNCONFIGURED`. The device-code flow, the Graph
-client, the six adapters and the transports are implemented to Microsoft's
-published protocols and exercised through injected openers against recorded
-response shapes.
+**Corrected 2026-09-13.** This section previously read *"No Microsoft call has
+been made from any repository."* That was false, and two preserved proofs in
+this repository say so:
 
-That proves request shapes, paging, delta handling, retry rules, error
-translation and refusals. It proves **nothing about connectivity**, and no test
-in either repository claims otherwise.
+| Record | Date | What it says |
+|---|---|---|
+| `Assistant_Plugin/proof/EMAIL_LAYER_PROOF.md` | 2026-08-26 | *"Source: the live Outlook Desktop profile. Not fixtures."* 3 accounts, 3 stores, 2 configured mailboxes read. 18 checks PASS. |
+| `Assistant_Plugin/proof/RESEARCH_PROOF.md` | 2026-08-25 | *"PASS -- research is LIVE and attributed."* 8 attributions, provider Microsoft 365 Copilot. |
+
+Live Microsoft capability has therefore existed in this programme. The sentence
+generalised from the code written during this mission to the whole programme,
+in a document whose purpose is not doing that. It is corrected rather than
+quietly rewritten, per `CLAUDE.md` §7.
+
+**What is true, stated at its real scope.** The M365 layer built here -- the
+device-code flow, the Graph client, the six adapters, the transports -- has
+made no call to Microsoft. It is implemented to Microsoft's published protocols
+and exercised through injected openers against recorded response shapes, which
+proves request shapes, paging, delta handling, retry rules, error translation
+and refusals, and proves **nothing about connectivity**. Every capability in
+that layer reports `UNCONFIGURED`, and no test in either repository claims
+otherwise.
+
+**Current connectivity is separately unestablished.** The most recent Microsoft
+record, `Assistant_Plugin/proof/COPILOT_LIVE_PROOF.md` dated 2026-09-12, reads
+**BLOCKED -- no tenant id**, and states plainly that no live prompt was sent.
+Historical live capability and current live capability are two different
+claims; only the first has evidence.
 
 ## 3. What is deliberately not built
 
