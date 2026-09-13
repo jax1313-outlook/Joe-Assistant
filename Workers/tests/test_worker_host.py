@@ -249,3 +249,103 @@ class TestTheDutiesAgainstARealLoad:
                                    ("JOE", "read_back_load")):
             _ask(bus, worker, capability, seeded)
         assert fingerprint() == before, "a worker changed Dispatch"
+
+
+# ── the lane-history comparison, against a real Dispatch ─────────────────
+#
+# This branch is only reachable once a load has a rate confirmation, and no
+# fixture ever seeded one. `assess_load` read `average_revenue` off
+# `store.get_lane_history()`, which is typed `list[dict]` and has no such key,
+# so every rate-confirmed load raised AttributeError and the bus degraded it to
+# UNAVAILABLE. Nothing failed; the capability simply never worked.
+#
+# These tests seed the rate confirmation the others omit.
+
+
+@pytest.fixture()
+def priced_lane(tmp_path, monkeypatch):
+    """Three Dallas->Houston loads: two priced history, one under assessment."""
+    pytest.importorskip("dispatch")
+    monkeypatch.setenv("PORTAL_DATA_DIR", str(tmp_path / "portal"))
+    from dispatch import db, services, store
+    from dispatch.models import RateConfirmation
+
+    db.set_db_path(tmp_path / "portal" / "dispatch.db")
+    try:
+        made = []
+        for amount in (3000.0, 3000.0, 1000.0):
+            load = services.create_load(
+                customer="Lane Co", broker_shipper="TQL",
+                pickup_location="Dallas TX", delivery_location="Houston TX",
+                pickup_datetime="2026-07-30 06:00 - 10:00",
+                delivery_datetime="2026-07-30 16:00 - 20:00",
+            )
+            store.create_rate_confirmation(RateConfirmation(
+                confirmation_id="", load_id=load["load_id"], rate_amount=amount,
+                rate_type="flat", distance_miles=240.0, confirmed_by="TQL", notes="",
+            ))
+            made.append(load["load_id"])
+        yield made          # [prior, prior, the cheap one]
+    finally:
+        db.set_db_path(None)
+
+
+class TestTheLaneComparison:
+    def test_a_rate_confirmed_load_does_not_crash(self, priced_lane):
+        """The whole defect in one assertion: this returned UNAVAILABLE."""
+        response = _ask(build_bus(), "INTELLIGENCE", "assess_load", priced_lane[0])
+        assert response.status == "LIVE", response.detail
+        assert "AttributeError" not in response.detail
+
+    def test_a_low_rate_is_noticed(self, priced_lane):
+        response = _ask(build_bus(), "INTELLIGENCE", "assess_load", priced_lane[2])
+        codes = {f.code for f in response.findings}
+        assert "RATE_BELOW_LANE_HISTORY" in codes, codes
+        finding = next(f for f in response.findings if f.code == "RATE_BELOW_LANE_HISTORY")
+        assert "3000.00" in finding.summary          # the average of the two priors
+        assert "2 previous priced load(s)" in finding.detail
+        assert finding.requires_human_review
+
+    def test_a_rate_at_the_going_rate_is_not_noticed(self, priced_lane):
+        response = _ask(build_bus(), "INTELLIGENCE", "assess_load", priced_lane[0])
+        assert "RATE_BELOW_LANE_HISTORY" not in {f.code for f in response.findings}
+
+    def test_the_load_is_not_compared_against_itself(self, priced_lane):
+        """A lane of one priced load has no history to compare to. Including the
+        load under assessment would make it its own benchmark and never fire."""
+        from dispatch import services, store
+        from dispatch.models import RateConfirmation
+        alone = services.create_load(
+            customer="Solo Co", broker_shipper="TQL",
+            pickup_location="Reno NV", delivery_location="Boise ID",
+        )
+        store.create_rate_confirmation(RateConfirmation(
+            confirmation_id="", load_id=alone["load_id"], rate_amount=50.0,
+            rate_type="flat", distance_miles=400.0, confirmed_by="TQL", notes="",
+        ))
+        response = _ask(build_bus(), "INTELLIGENCE", "assess_load", alone["load_id"])
+        assert response.status == "LIVE"
+        assert "RATE_BELOW_LANE_HISTORY" not in {f.code for f in response.findings}
+
+    def test_an_unpriced_lane_yields_no_average(self, priced_lane):
+        """Prior loads with no rate confirmation contribute nothing. Treating a
+        missing rate as zero would drag the average down and suppress the very
+        finding this exists to raise."""
+        from dispatch import services, store
+        from dispatch.models import RateConfirmation
+        for _ in range(2):
+            services.create_load(
+                customer="Unpriced Co", broker_shipper="TQL",
+                pickup_location="Ogden UT", delivery_location="Elko NV",
+            )
+        subject = services.create_load(
+            customer="Unpriced Co", broker_shipper="TQL",
+            pickup_location="Ogden UT", delivery_location="Elko NV",
+        )
+        store.create_rate_confirmation(RateConfirmation(
+            confirmation_id="", load_id=subject["load_id"], rate_amount=10.0,
+            rate_type="flat", distance_miles=300.0, confirmed_by="TQL", notes="",
+        ))
+        response = _ask(build_bus(), "INTELLIGENCE", "assess_load", subject["load_id"])
+        assert response.status == "LIVE"
+        assert "RATE_BELOW_LANE_HISTORY" not in {f.code for f in response.findings}

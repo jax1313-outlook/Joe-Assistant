@@ -37,7 +37,7 @@ class FakeReader:
         self._rates = rates or {}
         self._pods = pods or {}
         self._evidence = evidence or {}
-        self._lane = lane or {}
+        self._lane = lane or []
         self._brokers = brokers or {}
         self._milestones = milestones or {}
         self._exceptions = exceptions or {}
@@ -50,7 +50,12 @@ class FakeReader:
     def list_milestones(self, load_id): return self._milestones.get(load_id, [])
     def list_exceptions(self, load_id): return self._exceptions.get(load_id, [])
     def get_driver(self, driver_id): return self._drivers.get(driver_id)
-    def lane_history(self, origin, destination): return self._lane
+    def lane_history(self, origin, destination, *, exclude_load_id=""):
+        # Mirrors store.get_lane_history exactly: prior LOAD ROWS, list[dict],
+        # no aggregate, and the subject excluded. The old double returned a dict
+        # carrying "average_revenue" -- a key the real function has never had --
+        # so the one test covering this branch proved the shape of the bug.
+        return [r for r in self._lane if r.get("load_id") != exclude_load_id]
     def broker_record(self, name): return self._brokers.get(name)
 
 
@@ -236,7 +241,10 @@ class TestIntelligence:
         assert not response.refused, "Intelligence reports; it does not refuse freight"
 
     def test_a_low_rate_is_a_finding_not_a_verdict(self, reader):
-        reader._lane = {"average_revenue": 2600.0, "load_count": 9}
+        # Two priced priors on the same lane. The average is theirs, not LD-1's.
+        reader._lane = [{"load_id": "LD-8"}, {"load_id": "LD-9"}]
+        reader._rates["LD-8"] = {"revenue": 2600.0, "rate_amount": 2600.0}
+        reader._rates["LD-9"] = {"revenue": 2600.0, "rate_amount": 2600.0}
         bus = WorkerBus()
         bus.register(IntelligenceWorker(reader=reader))
         response = bus.ask("INTELLIGENCE", WorkerRequest(

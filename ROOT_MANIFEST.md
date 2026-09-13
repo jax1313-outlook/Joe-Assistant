@@ -7,7 +7,7 @@ Check it with:
 
     python Dispatch_Corrections/verify_manifest.py
 
-**452 files, 4,990,650 bytes.**
+**452 files, 4,997,876 bytes.**
 
 Excluded: `.git/`, `__pycache__/`, `.pytest_cache/`, compiled Python, the
 archive of this tree, this file itself, and everything `.gitignore` names --
@@ -451,16 +451,16 @@ which is where the runtime token cache and the memory records live.
 | `Testing/proof_local.py` | 24354 | `0d1ddbada3797127f4d2825dc817cfb6323cfdd6dd838cd35330ef8a7af905ae` |
 | `Testing/test_package_excludes_runtime_state.py` | 5642 | `c0e2ff06de57f542dbe961da9d51cc3a988dc788bc6b647b2748a154ae1679d9` |
 | `Testing/test_sandbox_engine.py` | 23030 | `8734c844136f801b78e8d9e81fe436692ddbbcbbcb333d11e41ab3a1ebaff151` |
-| `Workers/tests/test_worker_bus.py` | 16777 | `f4136c54bc20038c5c9846d2260d3524c8e39a0b62865129db750d1f2903f382` |
+| `Workers/tests/test_worker_bus.py` | 17406 | `8bc53d1cb3de0f029f382c9338f78c891959e082fe73033038873760049855bb` |
 | `Workers/tests/test_worker_cli.py` | 9175 | `95e2e7b9e9175ba6d1d0356047cc5304425e5c0daecc2958aca702217ef27345` |
-| `Workers/tests/test_worker_host.py` | 10812 | `81541dd1fd042fe02332d7f1ac345045f6eea45f6082bae076f263ee014407ad` |
+| `Workers/tests/test_worker_host.py` | 15814 | `915b151b9b7e6ed05c6f1866f6ef067afb1b157b767180d01230562106547f4f` |
 | `Workers/worker_bus/__main__.py` | 6758 | `a288dcb0a99b8950333e0b58c8ec36c37fa61d313cf7915a0012315b06f45a66` |
 | `Workers/worker_bus/audit.py` | 3401 | `6e3fbe59bb40fe3a4d97a02860cb069891fb9b74a8618620ebb115fd33409f4d` |
 | `Workers/worker_bus/bus.py` | 11474 | `cdd29c1815c499f48c4c190e336207bb33b06d21deae3f6970be67b9b4491aa9` |
 | `Workers/worker_bus/contracts.py` | 7460 | `d3a33cbad55276f4fbcd3a1ad273a9129ffc4e63fc41c1d4e5f14f9760dde731` |
 | `Workers/worker_bus/host.py` | 8495 | `8eab316b4e817d720d9fa6fd1abf28c559480e26772908e22c893864649b747a` |
 | `Workers/worker_bus/workers/__init__.py` | 739 | `5005f139de1b0caf59db8d8085841a1f8ebb36846a299001bac7a5191d4bf997` |
-| `Workers/worker_bus/workers/intelligence.py` | 8092 | `c9a0da10df88c8d6c3d9edef12e75048122f5ba88e66817afc5c845f6ca81d9a` |
+| `Workers/worker_bus/workers/intelligence.py` | 9687 | `c42bd4e529b78f650e4e4114e05a45cc647554659169abc9da8d807325308f3b` |
 | `Workers/worker_bus/workers/joe.py` | 8046 | `d54c4bea2b57ae2e87640f23f266726c4f997369557194b7e79686bb9418deaa` |
 | `Workers/worker_bus/workers/library.py` | 3362 | `6d46185a36e559836e1fba5252f5def045582778fb337817c51012356fdcacaf` |
 | `Workers/worker_bus/workers/publisher.py` | 8381 | `e8d3e5805b3208baf3b2c1c8890e4ff4b251ee7955a729569904f34b351518ba` |

@@ -98,20 +98,16 @@ class IntelligenceWorker:
                 confidence="ABSENT", source_ref=f"load:{load_id}",
             ))
         else:
-            history = self.reader.lane_history(
-                load.get("pickup_location", ""), load.get("delivery_location", "")
-            )
-            if history and history.get("average_revenue"):
-                average = history["average_revenue"]
-                if rate["revenue"] < average * LOW_RATE_FRACTION:
-                    findings.append(Finding(
-                        "RATE_BELOW_LANE_HISTORY",
-                        f"{rate['revenue']:.2f} is below this lane's average of {average:.2f}.",
-                        f"Based on {history.get('load_count', 0)} previous load(s). "
-                        "History is not a rate floor and this is not a refusal.",
-                        confidence="LIVE", source_ref=f"lane:{load.get('pickup_location')}",
-                        requires_human_review=True,
-                    ))
+            average, priced = self._lane_average(load, load_id)
+            if average and rate["revenue"] < average * LOW_RATE_FRACTION:
+                findings.append(Finding(
+                    "RATE_BELOW_LANE_HISTORY",
+                    f"{rate['revenue']:.2f} is below this lane's average of {average:.2f}.",
+                    f"Based on {priced} previous priced load(s). "
+                    "History is not a rate floor and this is not a refusal.",
+                    confidence="LIVE", source_ref=f"lane:{load.get('pickup_location')}",
+                    requires_human_review=True,
+                ))
 
         for name in ("pickup_datetime", "delivery_datetime"):
             if not load.get(name):
@@ -137,6 +133,41 @@ class IntelligenceWorker:
             ),
             detail=f"{len(findings)} finding(s). Advisory only -- nothing here decides anything.",
         )
+
+    def _lane_average(self, load: dict, load_id: str) -> tuple[float, int]:
+        """What this lane has historically paid, and how many loads say so.
+
+        `store.get_lane_history()` returns **load rows**, not an aggregate -- it
+        is typed `list[dict]` and has no `average_revenue` key. Intelligence
+        previously read one off it, which raised `AttributeError` on every load
+        that had a rate confirmation, because the branch is only reachable once
+        a rate exists and no test ever seeded one. The bus degraded that to
+        UNAVAILABLE, so the failure was survivable and invisible.
+
+        The arithmetic belongs here rather than behind a new reader method: the
+        reader exposes Dispatch functions as they are, and drawing an inference
+        from several rows is the part Intelligence is for. Revenue comes from
+        each prior load's own rate confirmation -- a load row does not carry
+        one -- so a lane of unpriced loads yields no average and no finding,
+        which is the correct answer rather than a comparison against zero.
+
+        The load under assessment is excluded. Comparing a rate to an average it
+        is itself inside makes a low rate look closer to normal the more unusual
+        it is.
+        """
+        priors = self.reader.lane_history(
+            load.get("pickup_location", ""),
+            load.get("delivery_location", ""),
+            exclude_load_id=load_id,
+        )
+        revenues = []
+        for prior in priors or ():
+            confirmation = self.reader.get_rate_confirmation(prior.get("load_id", ""))
+            if confirmation and confirmation.get("revenue"):
+                revenues.append(confirmation["revenue"])
+        if not revenues:
+            return 0.0, 0
+        return sum(revenues) / len(revenues), len(revenues)
 
     def _assess_broker(self, request: WorkerRequest) -> WorkerResponse:
         name = request.payload.get("broker", "")
