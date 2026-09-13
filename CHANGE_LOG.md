@@ -24,7 +24,20 @@ keeping:
 | `Claude/DISPATCH_PROGRAM_MAP.md` | 65 | "NOT an approved controlling document" |
 
 Authority is structural, not lexical. So the tool ranks and a person reads.
-Reading what it surfaced found real gaps: **23 → 35 registered**.
+Reading what it surfaced found real gaps. A second pass then replaced the
+word-count screen with the structural one — what a document says about itself in
+its own status line — which took a useless queue of 171 down to **22 that
+declare themselves binding and are not registered**.
+
+**23 → 44 registered.** Nine were production Dispatch doctrine, two issued by
+Mike personally on 30 August 2026, and one —
+`DISPATCH_SYSTEM_INDEPENDENCE_DOCTRINE` — was a standing criterion of this whole
+mission that had never been in the registry.
+
+One of them, `DISPATCH_CAPACITY_PLAN_DOCTRINE`, governs the capacity work built
+earlier in this same phase, written before the doctrine had been read. The code
+complied. `0016` measures it rather than assuming it: three assessments, and the
+row-count fingerprint of every table is unchanged.
 
 The largest was in this repository — the **Assistant Plugin Constitution**,
 "Doctrine. Binding on all Assistant work" by its own statement, whose Article II
@@ -58,9 +71,9 @@ false-success defects found by writing the tests: reporting `LIVE` when Graph
 never returned the finished item, and when it returned a `200` with no `id`.
 Both now `UNVERIFIED` with the session cancelled.
 
-**Dispatch suite 4,217 → 4,220. Sandbox suite 681 → 692.**
+**Dispatch suite 4,217 → 4,221. Sandbox suite 681 → 692.**
 
-Patches `0013`–`0015` were applied to a clean checkout of the Phase 2 base with
+Patches `0013`–`0016` were applied to a clean checkout of the Phase 2 base with
 `git am` and their tests run there: 49 passed. The patch files are what they
 claim to be.
 

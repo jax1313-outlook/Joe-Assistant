@@ -7,7 +7,7 @@ Check it with:
 
     python Dispatch_Corrections/verify_manifest.py
 
-**573 files, 5,046,894 bytes.**
+**574 files, 5,065,006 bytes.**
 
 Excluded: `.git/`, `__pycache__/`, `.pytest_cache/`, compiled Python, the
 archive of this tree, and this file itself.
@@ -501,7 +501,7 @@ archive of this tree, and this file itself.
 | `Build/sandbox_engine/intents.py` | 7770 | `f8bf218db54080021d272eb026917cb1cfb76b21fbfa3c9fa44cd948481e0995` |
 | `Build/sandbox_engine/records.py` | 6317 | `e9de6c087c53f65d48687bef7721c93f1327bcd771c59bd6afe9de2f6ecc5f0b` |
 | `Build/sandbox_engine/store.py` | 6851 | `cb0e1a6f0a444d28c8d066b4a7f13c3b496dd063eb7d9c01b472e02572a16bda` |
-| `CHANGE_LOG.md` | 7947 | `1d27e64ed34c2a7397a23a4ac9c9b1d609344b11cafa0bb6470ea0d6a511f4ad` |
+| `CHANGE_LOG.md` | 8714 | `72d928a81a8f6f48cbd9019770c77e19e51254ece382a5b801addbf055746291` |
 | `Constitution/SANDBOX_ENGINE_BOUNDARIES_v1.md` | 8728 | `f41f929135570afdec3602565dcadf1a54e5a03adbd699db1520ef5f263bc890` |
 | `Context/SANDBOX_ENGINE_CONTEXT_v1.md` | 6984 | `ed74eea4459c78060614e4f7f7cb8547c95c6fe3ad5b5465f6ee4a437300ac91` |
 | `DISPATCH_AGENT_GOVERNANCE_LAW_v1.md` | 18723 | `fb57871aa071ef4729010632186fdd75004bbbb289359e00cb503bb11738857e` |
@@ -515,7 +515,7 @@ archive of this tree, and this file itself.
 | `Dispatch_Corrections/docs/EXTERNAL_ACTIVATION.md` | 4989 | `a2b86fc90db7c77d68117b2aa551a2f16bcf1a6db6c7c8d0851cb9692bb3c910` |
 | `Dispatch_Corrections/docs/IMPLEMENTATION_SUMMARY.md` | 10236 | `1fa0e51746604889450f4cb289f0cefb517901c55b4c0a95d7960656f352167d` |
 | `Dispatch_Corrections/docs/JOE_IMPLEMENTATION.md` | 7861 | `883ae710b074855a1d20f344bd1fc7eabcbda0d3a26eb733038514c3ea7c526e` |
-| `Dispatch_Corrections/docs/KNOWN_LIMITATIONS.md` | 9740 | `08565fdf7ed2ed02de6ae59d41a11823fd8c06f3e2824e9e186deb5e7711e6a5` |
+| `Dispatch_Corrections/docs/KNOWN_LIMITATIONS.md` | 10471 | `25e8f2c8e3a066e0b74cb34c9343c243b8729909c4a8043ee2e232ff8126f417` |
 | `Dispatch_Corrections/docs/MERGE_PLAN.md` | 6153 | `78d5a077d523fb45f94b61e8078dc69125ceb99dbb2178ab1420ecb448d2fb52` |
 | `Dispatch_Corrections/docs/MIGRATION_PLAN.md` | 6757 | `a03ffdc9f9c235f8b3a40dddabadd22b6d5b95ff6c8daef1fcdb0da7c1e7c42e` |
 | `Dispatch_Corrections/docs/ROLLBACK_PLAN.md` | 6474 | `d8443f90c1cd1833bb0981f4f6d0e48c6831e4770d5ffc69f09da3c209534ba2` |
@@ -536,13 +536,14 @@ archive of this tree, and this file itself.
 | `Dispatch_Corrections/patches/0010-Wire-the-capacity-engine-into-production-and-make-ap.patch` | 76280 | `0d6eb971b117902613398dea7f5f4a7e78ad4aef5dea8472523753bd8d956a51` |
 | `Dispatch_Corrections/patches/0011-Measure-branch-coverage-and-measure-the-launcher.patch` | 5751 | `fda98059130c48e09ded5e6ca298d22f79ecc8b19b94eb544d1d61f35585894e` |
 | `Dispatch_Corrections/patches/0012-Record-what-governs-this-repository-and-adjudicate-t.patch` | 8717 | `599ba7be3e88cc11f5dfcbfcc497ea79512be57a4483d953be35e9b7342baa7e` |
-| `Dispatch_Corrections/patches/0013-Build-capacity-stops-from-real-loads-and-refuse-to-i.patch` | 32239 | `1a6d4a0657d5fb07c8480bfae100449ce44487f7e86216851662e5bb66eb193a` |
-| `Dispatch_Corrections/patches/0014-Stop-the-JSON-stores-losing-a-concurrent-update.patch` | 35309 | `297fe39a1b29d63c383401f86aea7e329b058b034c634f04f9592fdeb2a0dd15` |
-| `Dispatch_Corrections/patches/0015-Take-the-transit-distance-from-the-rate-confirmation.patch` | 7125 | `b6adb43f951ea32b9b82c591b9f1d1de64498fa5630ae5ac3ff7d27be7d21e8a` |
+| `Dispatch_Corrections/patches/0013-Build-capacity-stops-from-real-loads-and-refuse-to-i.patch` | 32239 | `66b4848e237a996b9e8775a8f9274c8070b28bbabb4f23c5b2d05fa402236957` |
+| `Dispatch_Corrections/patches/0014-Stop-the-JSON-stores-losing-a-concurrent-update.patch` | 35309 | `815617937a5f4191dba55cf9303dd12b794654665113ba19c66c8b6ec1b38a55` |
+| `Dispatch_Corrections/patches/0015-Take-the-transit-distance-from-the-rate-confirmation.patch` | 7125 | `c5513deee39ec456ac66be381b786a2a5a39d00633c6010ab36906f2bbc68454` |
+| `Dispatch_Corrections/patches/0016-Pin-the-capacity-assessment-as-advisory-per-doctrine.patch` | 4224 | `105eeb6657d25fc31c72681e8fcd25450a5d689d8e9d6b1781ceb50df2adb9b8` |
 | `Dispatch_Corrections/verify_manifest.py` | 4165 | `5ac66ff482b380075d916a072e30d540e5150768f6438c9a3b33ce49021a59ab` |
 | `Ergonomic Hybrid JOE Display.md` | 15299 | `be03c4cb04648b2ca2d9983b1577eb6101d45ee0bac4a40700e4d0d0c1f39f6c` |
 | `GOVERNANCE.md` | 2680 | `8344b284dff71ff6bff1a653abb4717770b0824355727b26862c125ad086b3fa` |
-| `Governance/GOVERNANCE_REGISTRY.json` | 21905 | `82056839c9c0c641ed82a0e9ba7de029f242dc6df82137d29f6946e47ca16d6a` |
+| `Governance/GOVERNANCE_REGISTRY.json` | 27447 | `5d0b167ea32a70a7dfbbdd1c9fbe696666a00cdb370ffa71fe30fc00619baa58` |
 | `Governance/GOVERNANCE_RESOLUTION_v1.md` | 9825 | `6b51fa22fbb188dbe05912d3ffbfdacde2ef510db9611814081e1fd64c77a4b6` |
 | `Governance/dispatch_governance/__init__.py` | 1514 | `cd2083f96fc61988de674eebf3f02568cc40a1ccd3f62e4e1b39d171d76baff3` |
 | `Governance/dispatch_governance/__main__.py` | 67 | `214038c12d8049858ade91ae0e8e61e37a2e13a274740080bbf3f2523fe7df23` |
@@ -553,8 +554,8 @@ archive of this tree, and this file itself.
 | `Governance/pointers/Joe-Assistant-GOVERNANCE.md` | 2680 | `8344b284dff71ff6bff1a653abb4717770b0824355727b26862c125ad086b3fa` |
 | `Governance/pointers/Publisher-GOVERNANCE.md` | 2568 | `ef15bacfb63a26f34e0be7645a5c6db8d71654df4c7a4c0078635e6d88834708` |
 | `Governance/tests/test_governance.py` | 12545 | `f9f7fda22607889f6b20197f38f2aeacf10a3299d95043c2b5b78cba005b05a3` |
-| `Governance/tools/record_registry.py` | 16785 | `da472245fd75e76ebce2d7d7ad5a32526cc6968a97273d7b2aa51ea77bc5a64d` |
-| `Governance/tools/screen_authority.py` | 5726 | `f73a6252c4233d8f01db5d871f01abb83c6c9bcb91765e0b322f971d6869808e` |
+| `Governance/tools/record_registry.py` | 20935 | `c4b0d2aec7f91d3a70b60d9deae455c2936a4f47d4d00cfbfd55ddd78700c2e2` |
+| `Governance/tools/screen_authority.py` | 8424 | `14338169c2c097b7375f98d1135fd7b7eed6521e7cabbeecb2fafd18bfdad42d` |
 | `Governance/tools/write_pointers.py` | 5252 | `b5f0029de465647dbf21b11ad38f248887914ca189eeecd46b1345f7ea2f6a91` |
 | `Governing_Inputs/LEVEL1_ASSISTANT_AGENT_CONFIG_v1.txt` | 6850 | `bbb82cd68f4fc360a93dc13ab1ff232411cc2cc76da3ade8fab3d77aa1155127` |
 | `Governing_Inputs/LEVEL1_ASSISTANT_BUILD_PACKAGE_v1.docx` | 42016 | `b59a11a1e565095465b1dcf3a0544181767a98fe1d50d91cf02e8fe5cdb043f5` |

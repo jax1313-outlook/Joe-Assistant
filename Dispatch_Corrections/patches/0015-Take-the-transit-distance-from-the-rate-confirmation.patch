@@ -1,7 +1,7 @@
 From 1e1b02c366c218abe0ea1544ab30334f4c4fd332 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 13 Sep 2026 02:52:34 +0000
-Subject: [PATCH 15/15] Take the transit distance from the rate confirmation
+Subject: [PATCH 15/16] Take the transit distance from the rate confirmation
 
 The previous change read distance_miles off the load record, found it
 absent, and honestly reported that the forward walk could not run. The

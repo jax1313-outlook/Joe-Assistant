@@ -74,6 +74,47 @@ def score(text: str) -> tuple[int, dict[str, int]]:
     return total, hits
 
 
+#: A document that governs usually says so in a header line, and that is a
+#: structural signal rather than a lexical one -- which ADR-22 records as the
+#: distinction the word-count score could not make. `CLAUDE.md` scores 38 on
+#: language and is the programme authority; `DISPATCH_PROGRAM_MAP.md` scores 65
+#: and says of itself that it controls nothing. Their status lines are not
+#: ambiguous at all.
+STATUS_LINE = re.compile(
+    r"^\s*\*{0,2}(Status|Authority|Final authority)\*{0,2}\s*:?\*{0,2}\s*(?P<value>.+)$",
+    re.I | re.M,
+)
+
+#: What a self-declared status has to contain to be worth reading. Deliberately
+#: narrow: these are the words a document uses to bind, not to discuss.
+BINDING_WORDS = re.compile(
+    r"\b(doctrine|binding|in force|constitution|ratified|signed|approved direction|"
+    r"controlling|authoritative)\b", re.I,
+)
+
+#: And what takes it straight back out again.
+DISCLAIMERS = re.compile(
+    r"\b(not an approved|recommendation only|proposal|draft|audit only|"
+    r"nothing implemented|nothing built|planning)\b", re.I,
+)
+
+
+def self_declared(text: str) -> tuple[str, str]:
+    """`(verdict, the line it came from)`.
+
+    BINDING   the document says it governs
+    DISCLAIMS the document says it does not
+    SILENT    it does not say, so only a person can tell
+    """
+    for match in STATUS_LINE.finditer(text[:4000]):
+        value = match.group("value").strip()
+        if DISCLAIMERS.search(value):
+            return "DISCLAIMS", value[:90]
+        if BINDING_WORDS.search(value):
+            return "BINDING", value[:90]
+    return "SILENT", ""
+
+
 def candidates(root: Path):
     known = registered_paths()
     for repo_dir in sorted(p for p in root.iterdir() if p.is_dir()):
@@ -87,9 +128,11 @@ def candidates(root: Path):
             except OSError:
                 continue
             total, hits = score(text)
+            verdict, line = self_declared(text)
             yield {
                 "repo": repo, "path": rel, "score": total, "hits": hits,
                 "registered": (repo, rel) in known, "bytes": path.stat().st_size,
+                "declares": verdict, "status_line": line,
             }
 
 
@@ -130,7 +173,23 @@ def main() -> int:
         scores = sorted(r["score"] for r in registered)
         print(f"  registered score range: {scores[0]}-{scores[-1]} (threshold {THRESHOLD})")
 
-    print(f"\n{len(flagged)} unregistered document(s) score at or above {THRESHOLD}:\n")
+    # The queue that matters. A document that declares itself binding and is
+    # not registered is a gap; one that scores highly on language and declares
+    # nothing is only a maybe.
+    declared = [r for r in unregistered if r["declares"] == "BINDING"]
+    print(f"\nDECLARES ITSELF BINDING and is not registered -- {len(declared)}:\n")
+    for row in sorted(declared, key=lambda r: -r["score"]):
+        print(f"  {row['score']:4}  {row['repo']}/{row['path']}")
+        print(f"        status: {row['status_line']}")
+
+    disclaimed = [r for r in unregistered if r["declares"] == "DISCLAIMS"]
+    print(f"\n{len(disclaimed)} unregistered document(s) disclaim authority in their own header.")
+    print("  Those are correctly absent, and the loud ones are worth registering ADVISORY")
+    print("  anyway so nobody has to re-read them to find that out.")
+
+    print(f"\n{len(flagged)} unregistered document(s) score at or above {THRESHOLD} on language")
+    print("  alone. Language is a poor signal -- see ADR-22 -- so this is a reading list,")
+    print("  not a queue of gaps:\n")
     for row in flagged:
         top = ", ".join(f"{k}x{v}" for k, v in sorted(row["hits"].items(), key=lambda kv: -kv[1])[:4])
         print(f"  {row['score']:4}  {row['repo']}/{row['path']}")

@@ -428,6 +428,105 @@
       "superseded_by": "",
       "recorded_at": "2026-09-13",
       "note": "Registered precisely because it reads as authoritative and is not. It scores higher on authority language than CLAUDE.md, and its own header says 'Status: Proposal / Planning Draft -- NOT an approved controlling document' and 'This document is a recommendation only. No action is authorized.' An agent cold-starting in Claude/ and finding a 'Total Program Map' could build from it. ADVISORY says do not."
+    },
+    {
+      "doc_id": "DISPATCH_ACCESSORIAL_POLICY_DOCTRINE",
+      "repo": "Dispatch",
+      "path": "docs/DISPATCH_ACCESSORIAL_POLICY_DOCTRINE.md",
+      "status": "CURRENT",
+      "scope": "Accessorials are company policy, not application settings.",
+      "sha256": "b2671f0559eba995e96bb891e6064fda5f09cfa164249769b7f1900e2626b12a",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "'DOCTRINE. Issued by the operator, 30 August 2026.' Issued by Mike himself, in the production repository, and absent from the registry until now -- which is the exact failure a governance registry exists to prevent. It supersedes the accessorials block in DISPATCH_POLICY_PROFILE_SPEC.md."
+    },
+    {
+      "doc_id": "DISPATCH_CAPACITY_PLAN_DOCTRINE",
+      "repo": "Dispatch",
+      "path": "docs/DISPATCH_CAPACITY_PLAN_DOCTRINE.md",
+      "status": "CURRENT",
+      "scope": "Day plans, stop sequences and capacity allocations remain recommendations until a human approves them.",
+      "sha256": "8a70adf5f2d3e3c3e6bba1a8064a94afce992ad7e2321f2db1a9ee37c56e79aa",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "'DOCTRINE. Issued by the operator, 30 August 2026.' Directly governs the capacity stop work built earlier in Phase 3, which was written advisory and non-mutating before this document had been read. Compliance was checked afterwards, not assumed: dispatch/load_stops.py reserves nothing and decides nothing."
+    },
+    {
+      "doc_id": "DISPATCH_SYSTEM_INDEPENDENCE_DOCTRINE",
+      "repo": "Dispatch",
+      "path": "docs/DISPATCH_SYSTEM_INDEPENDENCE_DOCTRINE.md",
+      "status": "CURRENT",
+      "scope": "Dispatch remains operable when every external system is down.",
+      "sha256": "f56ac0a394f8deca0e21cceb30e5e0fca5719ce060c4b07e8de510bc2b5b1c61",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Named as a standing criterion for this whole mission and never registered. 'Not degraded into uselessness. Operable.'"
+    },
+    {
+      "doc_id": "DISPATCH_DETERMINISTIC_CHASSIS",
+      "repo": "Dispatch",
+      "path": "docs/DISPATCH_DETERMINISTIC_CHASSIS.md",
+      "status": "CURRENT",
+      "scope": "The engine is deterministic, the operator owns the policy, the human owns the decision.",
+      "sha256": "c42b12c799b42b08a75d4142e06ffa58fe7831355095a8564b394162f26020be",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Self-declared DOCTRINE. Same inputs, same policy profile, same outputs."
+    },
+    {
+      "doc_id": "DISPATCH_FACT_AND_PROVENANCE_DOCTRINE",
+      "repo": "Dispatch",
+      "path": "docs/DISPATCH_FACT_AND_PROVENANCE_DOCTRINE.md",
+      "status": "CURRENT",
+      "scope": "Dispatch does not invent facts, and every fact carries its origin.",
+      "sha256": "30db111d1fcb07c2abd1795abbe2040d44da63ef5baf8a0962d2664db31569f0",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Self-declared DOCTRINE. 'A number on a screen that cannot be traced to a source is not information. It is a guess.'"
+    },
+    {
+      "doc_id": "DISPATCH_CONFIGURABLE_BUSINESS_POLICY_DOCTRINE",
+      "repo": "Dispatch",
+      "path": "docs/DISPATCH_CONFIGURABLE_BUSINESS_POLICY_DOCTRINE.md",
+      "status": "CURRENT",
+      "scope": "Dispatch owns the engine; the operator owns the settings.",
+      "sha256": "0389da32ed97d80d27e9861d1da6fff862e653752e18b66384f262d6fd0a961d",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Self-declared DOCTRINE."
+    },
+    {
+      "doc_id": "DISPATCH_EXTERNAL_ADAPTER_BOUNDARIES",
+      "repo": "Dispatch",
+      "path": "docs/DISPATCH_EXTERNAL_ADAPTER_BOUNDARIES.md",
+      "status": "CURRENT",
+      "scope": "An adapter is the only place in Dispatch that knows a specific external system exists.",
+      "sha256": "fba04b6a16883bf82b723757428309d72abea40d1b169a085342b236f30e03f7",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Self-declared DOCTRINE, and the doctrine the provider-neutral transport and the Microsoft adapter layer were built to."
+    },
+    {
+      "doc_id": "DISPATCH_STATE_TRANSITION_RULES",
+      "repo": "Dispatch",
+      "path": "docs/DISPATCH_STATE_TRANSITION_RULES.md",
+      "status": "CURRENT",
+      "scope": "The Mission Record is created once and enriched for life. It is never copied and never changes identity.",
+      "sha256": "81f7b872f6d355ed9610fefd2f653a0a13ae6c8811fb4ef65bc8f93ab64892cc",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Self-declared DOCTRINE that 'describes rules current code already partly implements' -- so the gap between it and the code is itself a finding, and it could not be seen while the document was unregistered."
+    },
+    {
+      "doc_id": "DISPATCH_BUILD_MATRIX_V1",
+      "repo": "Dispatch",
+      "path": "DISPATCH_BUILD_MATRIX_v1.md",
+      "status": "CURRENT",
+      "scope": "The build matrix, and the authority it claims to run under.",
+      "sha256": "ffb58d62290e49cdb6bf436f44f8c605535bd24bbd4f076ff0557565ccb89b50",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Bears on the unresolved question in section 9: its header reads 'Mike Zachary remains final authority (Constitution v3 3, 22)' -- a production Dispatch document treating v3 as authoritative and citing its sections. That is evidence about v3's standing and it is not a ratification record, so v3 stays ADVISORY and the citation is recorded here for Mike to weigh."
     }
   ]
 }

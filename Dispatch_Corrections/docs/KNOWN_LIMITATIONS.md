@@ -109,8 +109,8 @@ authority and is not registered is invisible to the drift detector and to
 anyone asking what governs.
 
 `Governance/tools/screen_authority.py` scores every document by how binding its
-language is, and reading what it surfaced found real gaps. **35 documents are
-now registered**, 21 CURRENT, 6 SUPERSEDED, 4 HISTORICAL, 4 ADVISORY.
+language is, and reading what it surfaced found real gaps. **44 documents are
+now registered**, up from 23.
 
 The largest gap was in this repository: the **Assistant Plugin Constitution**,
 which says of itself "Doctrine. Binding on all Assistant work", whose Article II
@@ -130,9 +130,22 @@ declares itself the entry point and its clauses fail a build, not because of the
 words it uses. Nothing was registered by score; the screen only decided what got
 read.
 
-Two things are still true. 171 unregistered documents score above the threshold
-and have not each been read — the screen ranks, a person adjudicates, and that
-queue is open. And the count is now against 425 Markdown files across the
+A second pass replaced the word-count screen with the structural one ADR-22
+argues for: what a document says about itself in its own status line. That took
+a useless queue of 171 down to **22 documents that declare themselves binding
+and are not registered** — and nine of them were production Dispatch doctrine,
+including two issued by Mike personally on 30 August 2026, and
+`DISPATCH_SYSTEM_INDEPENDENCE_DOCTRINE`, which was named as a standing criterion
+for this entire mission and had never been registered.
+
+One of them, `DISPATCH_CAPACITY_PLAN_DOCTRINE`, governs the capacity stop work
+built earlier in this same phase — written before the doctrine had been read.
+The code complied; compliance is now measured and pinned by a test rather than
+assumed.
+
+Still open: the remaining 13 self-declaring documents on that list, mostly in
+`Hold/` and `Dispatch-Old/`, have not each been read and adjudicated. The screen
+ranks; a person decides. And the count is now against 425 Markdown files across the
 clones, not the 87 Phase 2 cited; that figure was scoped to a narrower set and
 is corrected here.
 
