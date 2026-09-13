@@ -1,7 +1,7 @@
 {
   "version": "1",
   "authority": "DISPATCH_CLAUDE_MD",
-  "generated_at": "2026-09-12",
+  "generated_at": "2026-09-13",
   "answers": {
     "may a Manager component be built into Dispatch": "DISPATCH_MANAGER_RECORD",
     "what words may a status use": "DISPATCH_CLAUDE_MD",
@@ -52,7 +52,7 @@
       "scope": "Programme authority for everything that runs: boundaries, the truth vocabulary, what may and may not be built.",
       "sha256": "66fc03970ea22dccd999e2b655ed5a3c49960ff6ec963010f76f9cd19847fd92",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "Declares itself the first file to read, and its clauses are the only governance in the programme enforced by a test that fails a build (Dispatch/tests/test_repository_doctrine.py)."
     },
     {
@@ -61,9 +61,9 @@
       "path": "DECISION_LOG.md",
       "status": "CURRENT",
       "scope": "Every adjudicated decision, in order, with its date and reasoning.",
-      "sha256": "36ba202e1d9e1fe300cd0041085b8340f1156413a5aa17699072f494ad0b8bf1",
+      "sha256": "c99c16847270be33ca2a43abab85c52c3106f17d0c9cca9fb005f3292ff488f0",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "The record CLAUDE.md section 7 requires a conflict to be reported into."
     },
     {
@@ -74,7 +74,7 @@
       "scope": "The clauses of CLAUDE.md asserted against the repository rather than trusted.",
       "sha256": "536826450aeba8c61ddbb5fd833919a0d413c2218002743b195307643d1fd0a2",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "Governance that is executable. Where a document and this file disagree about what the code may contain, this file is what actually decides, because it is what refuses the merge."
     },
     {
@@ -85,7 +85,7 @@
       "scope": "The four verbs every feature is measured against.",
       "sha256": "a940a5ca9486f426579ea9186fd8c7035fd60f691be5e465a1b28cf138c22e43",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": ""
     },
     {
@@ -96,7 +96,7 @@
       "scope": "D1-D15, binding on every driver-facing surface.",
       "sha256": "61e29833126835fcff9cafc3dbdf609c70202e18bb53ac0e15cb48e32abcb0c5",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": ""
     },
     {
@@ -107,7 +107,7 @@
       "scope": "Human authority: who decides, and what software may never claim.",
       "sha256": "e0e9e337643bcb1cbba8774223e2a3a985aa3739e30b4e61afe59e0fa4f67167",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": ""
     },
     {
@@ -118,7 +118,7 @@
       "scope": "The architecture and the document map.",
       "sha256": "11766ad13d9def0aec1df80e9ad8cb16024824711534fc2616c68213f5a22f43",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": ""
     },
     {
@@ -129,7 +129,7 @@
       "scope": "The permanent record of Manager: named in planning, never built.",
       "sha256": "d612345337ab3c0a701eb94d5865778af0db40b4c95155ed8bfd176b6a0fca93",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "Authorises no code, no route, no data model and no runtime behaviour. This is the document that settles the Manager question for code."
     },
     {
@@ -140,7 +140,7 @@
       "scope": "Programme intent: layers, organisational functions, cognitive functions.",
       "sha256": "acabb4c1c0f96adc10b3edc1a1586ed3d1168c85b3c730600f86eb5ab4cf1d44",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "Describes the intended organisational shape of the programme. It is later than v2 and supersedes it as a statement of intent. It authorises no code: where it names a component, that is a description of an intended function, not a licence to build one into Dispatch."
     },
     {
@@ -151,7 +151,7 @@
       "scope": "Byte-identical copy of CONSTITUTION_V3.",
       "sha256": "acabb4c1c0f96adc10b3edc1a1586ed3d1168c85b3c730600f86eb5ab4cf1d44",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "A copy, not a second authority. Identical bytes as of the recorded date; the drift detector is what notices if that stops being true."
     },
     {
@@ -162,7 +162,7 @@
       "scope": "Programme intent, earlier revision.",
       "sha256": "16708d4cfa7bfe5301add3622c0b49935c7c8ea0e933e9e20ddf837d99502b5a",
       "superseded_by": "CONSTITUTION_V3",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "Superseded by v3 as a statement of intent. Retained and readable -- Dispatch/CLAUDE.md section 7 forbids editing an old decision to hide its history. It does not govern any repository now."
     },
     {
@@ -173,7 +173,7 @@
       "scope": "Programme intent, earlier revision.",
       "sha256": "16708d4cfa7bfe5301add3622c0b49935c7c8ea0e933e9e20ddf837d99502b5a",
       "superseded_by": "CONSTITUTION_V3",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "Superseded by v3 as a statement of intent. Retained and readable -- Dispatch/CLAUDE.md section 7 forbids editing an old decision to hide its history. It does not govern any repository now."
     },
     {
@@ -184,7 +184,7 @@
       "scope": "Programme intent, earlier revision.",
       "sha256": "16708d4cfa7bfe5301add3622c0b49935c7c8ea0e933e9e20ddf837d99502b5a",
       "superseded_by": "CONSTITUTION_V3",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "Superseded by v3 as a statement of intent. Retained and readable -- Dispatch/CLAUDE.md section 7 forbids editing an old decision to hide its history. It does not govern any repository now."
     },
     {
@@ -195,7 +195,7 @@
       "scope": "Programme context, earlier revision.",
       "sha256": "71e8e4dee7f3a98aab5f1b043e072e6c21092dc60583e558ed96688882306229",
       "superseded_by": "DISPATCH_ARCHITECTURE",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "Context, not authority. Superseded by the architecture document in the production repository, which is the one kept current."
     },
     {
@@ -206,7 +206,7 @@
       "scope": "Programme context, earlier revision.",
       "sha256": "71e8e4dee7f3a98aab5f1b043e072e6c21092dc60583e558ed96688882306229",
       "superseded_by": "DISPATCH_ARCHITECTURE",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "Context, not authority. Superseded by the architecture document in the production repository, which is the one kept current."
     },
     {
@@ -217,7 +217,7 @@
       "scope": "Programme context, earlier revision.",
       "sha256": "71e8e4dee7f3a98aab5f1b043e072e6c21092dc60583e558ed96688882306229",
       "superseded_by": "DISPATCH_ARCHITECTURE",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "Context, not authority. Superseded by the architecture document in the production repository, which is the one kept current."
     },
     {
@@ -228,7 +228,7 @@
       "scope": "A description of the Manager function.",
       "sha256": "7c46e843c3ae04a54e0b4a1ef54c726d83f412eb4d5e7068f8525e6b41d8b5a4",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "A component description carried in a worker repository. It is history: Dispatch/docs/MANAGER.md records that Manager was named and never built, and Dispatch/CLAUDE.md section 5.6 forbids creating, restoring, referencing or inferring one in code."
     },
     {
@@ -239,7 +239,7 @@
       "scope": "A description of the Manager function.",
       "sha256": "7c46e843c3ae04a54e0b4a1ef54c726d83f412eb4d5e7068f8525e6b41d8b5a4",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "A component description carried in a worker repository. It is history: Dispatch/docs/MANAGER.md records that Manager was named and never built, and Dispatch/CLAUDE.md section 5.6 forbids creating, restoring, referencing or inferring one in code."
     },
     {
@@ -250,7 +250,7 @@
       "scope": "A description of the Manager function.",
       "sha256": "7c46e843c3ae04a54e0b4a1ef54c726d83f412eb4d5e7068f8525e6b41d8b5a4",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "A component description carried in a worker repository. It is history: Dispatch/docs/MANAGER.md records that Manager was named and never built, and Dispatch/CLAUDE.md section 5.6 forbids creating, restoring, referencing or inferring one in code."
     },
     {
@@ -261,7 +261,7 @@
       "scope": "What the Library worker is and what it may do, inside its own repository.",
       "sha256": "7dd5b896ab8e47d0091b0a47186acab76317c28941c11d3915ba62f6b3cb2778",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": ""
     },
     {
@@ -272,7 +272,7 @@
       "scope": "What the Publisher worker is and what it may do, inside its own repository.",
       "sha256": "5785bc3dd18d093b697e824eb970eeafe6b33d7f8096ed96b64bf6b292a43bc3",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": ""
     },
     {
@@ -283,7 +283,7 @@
       "scope": "This repository is the proving ground, not production.",
       "sha256": "ee352944d4e65cfd9bddeb9ca8fb10995af82c1db42fb5f28e0f795d15b8e128",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": "States its own promotion path: Test-Grounds -> Review -> Hold -> Review -> Dispatch. It is why work lands here first."
     },
     {
@@ -294,8 +294,140 @@
       "scope": "The staging repository between the proving ground and production.",
       "sha256": "bb17d44cea8bc5b12a9f5683559069645062993d98155eae5f4b78a84ead84cb",
       "superseded_by": "",
-      "recorded_at": "2026-09-12",
+      "recorded_at": "2026-09-13",
       "note": ""
+    },
+    {
+      "doc_id": "ASSISTANT_PLUGIN_CONTEXT_V1",
+      "repo": "Joe-Assistant",
+      "path": "ASSISTANT_PLUGIN_CONSTITUTION_v1/01_CONTEXT_v1.md",
+      "status": "CURRENT",
+      "scope": "What the Assistant is for, and the standing it is built under.",
+      "sha256": "99ecbf01b32320bcd2d6cccbd7f55854dc1fe0d34bc9c1d59d26d8bd8192615c",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Self-declared Doctrine."
+    },
+    {
+      "doc_id": "ASSISTANT_PLUGIN_CONSTITUTION_V1",
+      "repo": "Joe-Assistant",
+      "path": "ASSISTANT_PLUGIN_CONSTITUTION_v1/02_CONSTITUTION_v1.md",
+      "status": "CURRENT",
+      "scope": "The Assistant's own constitution: its standing as a plug-in, and the eight functions Article II permits.",
+      "sha256": "d2c5526cb7fac0321a62b38f5993d5ddbf60c157f506dc12d7ff74294b6a69b0",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Self-declared 'Doctrine. Binding on all Assistant work.', final authority Mike Zachary. DECISION_LOG cites its Article II when ruling that JOE cannot transmit. It was governing the Assistant work in this repository the whole time and was not in the registry -- the largest gap the Phase 3 screen found."
+    },
+    {
+      "doc_id": "ASSISTANT_PLUGIN_ARCHITECTURE_V1",
+      "repo": "Joe-Assistant",
+      "path": "ASSISTANT_PLUGIN_CONSTITUTION_v1/03_ARCHITECTURE_v1.md",
+      "status": "CURRENT",
+      "scope": "Architectural principle for the Assistant. No interface specification.",
+      "sha256": "7696b7b148bbd8eb476cf1f1b811e3717b05089f3ababdcbac2d025850a2f846",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Self-declared Doctrine."
+    },
+    {
+      "doc_id": "ASSISTANT_PLUGIN_GOVERNANCE_V1",
+      "repo": "Joe-Assistant",
+      "path": "ASSISTANT_PLUGIN_CONSTITUTION_v1/04_GOVERNANCE_v1.md",
+      "status": "CURRENT",
+      "scope": "How the Assistant's own doctrine changes, and who may change it.",
+      "sha256": "7af1001cbc81873af36f7ebb1fbb6a472608b9e961d90b16a3c3d3e68dd8f27f",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Self-declared Doctrine."
+    },
+    {
+      "doc_id": "ASSISTANT_PLUGIN_REPOSITORY_RECOMMENDATION_V1",
+      "repo": "Joe-Assistant",
+      "path": "ASSISTANT_PLUGIN_CONSTITUTION_v1/05_REPOSITORY_RECOMMENDATION_v1.md",
+      "status": "ADVISORY",
+      "scope": "Where the Assistant should live -- recommended, not decided.",
+      "sha256": "a44687c6f7ca581f7b62779d32b1595977c06071aba91cdba6ab3b20f51dcf24",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Self-declared 'Recommendation. Doctrine only -- no repository is created.' ADVISORY so it cannot be read as having settled the question."
+    },
+    {
+      "doc_id": "ASSISTANT_PLUGIN_RESEARCH_TRUTH_DOCTRINE_V1",
+      "repo": "Joe-Assistant",
+      "path": "ASSISTANT_PLUGIN_CONSTITUTION_v1/06_KNOWLEDGE_RESEARCH_TRUTH_DOCTRINE_v1.md",
+      "status": "CURRENT",
+      "scope": "What the Assistant may claim to know, and how a research answer is qualified.",
+      "sha256": "aabb416d8523d5cbf333ca25ce270a3835b838d866fde63e8bf9fa36956f2246",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Self-declared 'Approved Direction for Implementation'."
+    },
+    {
+      "doc_id": "ASSISTANT_PLUGIN_AMENDMENT_1_SIGNED",
+      "repo": "Joe-Assistant",
+      "path": "ASSISTANT_PLUGIN_CONSTITUTION_v1/AMENDMENT_1_TRANSMISSION_SIGNED.md",
+      "status": "CURRENT",
+      "scope": "Amendment 1 to the Assistant Plugin Constitution, on transmission.",
+      "sha256": "0d7166a1cb1c1128194295b720cb3306e1d4eae09047b8fda319e8a64c61b040",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Self-declared 'SIGNED by Mike Zachary.'"
+    },
+    {
+      "doc_id": "ASSISTANT_PLUGIN_AMENDMENT_1_CONDITIONS",
+      "repo": "Joe-Assistant",
+      "path": "ASSISTANT_PLUGIN_CONSTITUTION_v1/AMENDMENT_1_TRANSMISSION_PROPOSED.md",
+      "status": "CURRENT",
+      "scope": "The operating conditions Amendment 1 runs under.",
+      "sha256": "ecfd89bed5ec7058667f032499f20ff1f00219310926431b891710ceecaf4e9a",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "A naming trap, and the clearest argument for a registry over a filename: the file is called PROPOSED and its status line reads 'IN FORCE as the operating conditions of Amendment 1.' Sorted by filename, the signed amendment looks binding and this looks like a draft. Registered CURRENT on what it says about itself; the contradiction is recorded, not resolved."
+    },
+    {
+      "doc_id": "DISPATCH_CF04_LIFECYCLE_AUTHORITY",
+      "repo": "Dispatch",
+      "path": "DISPATCH_CF04_LIFECYCLE_AUTHORITY_MODEL_v1.md",
+      "status": "CURRENT",
+      "scope": "CF-04 adjudicated: the Spine is the authoritative lifecycle engine and Opportunity advises.",
+      "sha256": "90d9fe54d690bc29bc1fcbf2103f041d61a7c74920ed272ca9774c32cd786037",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Carries Mike's ruling verbatim, dated 2026-08-23, and CLAUDE.md 5.1 cites it. An adjudicated ruling that was not in the registry."
+    },
+    {
+      "doc_id": "DISPATCH_CONFLICT_AUTHORITY_REGISTER",
+      "repo": "Dispatch",
+      "path": "DISPATCH_CONFLICT_AND_AUTHORITY_REGISTER.md",
+      "status": "CURRENT",
+      "scope": "The CF-01 to CF-10 conflict register.",
+      "sha256": "f890416e89aaaef20570b1a6e598af2ca025da993e89ebe313c3a84355f495e7",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Deliberately NOT marked superseded. CF-04 supersedes the framing of one row out of ten and the other nine are live, so flattening the document to SUPERSEDED would bury nine open conflicts -- a worse error than one stale row. Read its CF-04 row against DISPATCH_CF04_LIFECYCLE_AUTHORITY_MODEL_v1.md."
+    },
+    {
+      "doc_id": "DISPATCH_RECOVERY_WAVE_1_REPORT",
+      "repo": "Dispatch",
+      "path": "DISPATCH_RECOVERY_WAVE_1_REPORT.md",
+      "status": "CURRENT",
+      "scope": "Recovery Wave 1 findings.",
+      "sha256": "239db6813e8ac777c396a70b549d64f1558be16a2688986d8bb3eca982ad57a8",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Same treatment as the conflict register: its CF-04 framing is superseded, the rest of the report is not."
+    },
+    {
+      "doc_id": "CLAUDE_PROGRAM_MAP",
+      "repo": "Claude",
+      "path": "DISPATCH_PROGRAM_MAP.md",
+      "status": "ADVISORY",
+      "scope": "A total programme map, offered as a proposal.",
+      "sha256": "0c8535ee5b1e3910e37f177e6310ac5988d3d13620bacb9b9829e61e0242fb55",
+      "superseded_by": "",
+      "recorded_at": "2026-09-13",
+      "note": "Registered precisely because it reads as authoritative and is not. It scores higher on authority language than CLAUDE.md, and its own header says 'Status: Proposal / Planning Draft -- NOT an approved controlling document' and 'This document is a recommendation only. No action is authorized.' An agent cold-starting in Claude/ and finding a 'Total Program Map' could build from it. ADVISORY says do not."
     }
   ]
 }

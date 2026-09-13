@@ -114,6 +114,83 @@ ADJUDICATION: tuple[tuple, ...] = (
      "It is why work lands here first."),
     ("HOLD_CHARTER", "Hold", "README.md", CURRENT,
      "The staging repository between the proving ground and production.", "", ""),
+
+    # ---- Phase 3: surfaced by screening for authority language, then read ----
+    #
+    # Governance/tools/screen_authority.py ranks every unregistered document by
+    # how binding its language sounds. As a classifier it fails -- CLAUDE.md
+    # scores 38 and a document that explicitly disclaims authority scores 65.
+    # As a reading list it worked, and reading what it surfaced found these.
+
+    ("ASSISTANT_PLUGIN_CONTEXT_V1", "Joe-Assistant",
+     "ASSISTANT_PLUGIN_CONSTITUTION_v1/01_CONTEXT_v1.md", CURRENT,
+     "What the Assistant is for, and the standing it is built under.", "",
+     "Self-declared Doctrine."),
+    ("ASSISTANT_PLUGIN_CONSTITUTION_V1", "Joe-Assistant",
+     "ASSISTANT_PLUGIN_CONSTITUTION_v1/02_CONSTITUTION_v1.md", CURRENT,
+     "The Assistant's own constitution: its standing as a plug-in, and the eight "
+     "functions Article II permits.", "",
+     "Self-declared 'Doctrine. Binding on all Assistant work.', final authority Mike "
+     "Zachary. DECISION_LOG cites its Article II when ruling that JOE cannot transmit. "
+     "It was governing the Assistant work in this repository the whole time and was "
+     "not in the registry -- the largest gap the Phase 3 screen found."),
+    ("ASSISTANT_PLUGIN_ARCHITECTURE_V1", "Joe-Assistant",
+     "ASSISTANT_PLUGIN_CONSTITUTION_v1/03_ARCHITECTURE_v1.md", CURRENT,
+     "Architectural principle for the Assistant. No interface specification.", "",
+     "Self-declared Doctrine."),
+    ("ASSISTANT_PLUGIN_GOVERNANCE_V1", "Joe-Assistant",
+     "ASSISTANT_PLUGIN_CONSTITUTION_v1/04_GOVERNANCE_v1.md", CURRENT,
+     "How the Assistant's own doctrine changes, and who may change it.", "",
+     "Self-declared Doctrine."),
+    ("ASSISTANT_PLUGIN_REPOSITORY_RECOMMENDATION_V1", "Joe-Assistant",
+     "ASSISTANT_PLUGIN_CONSTITUTION_v1/05_REPOSITORY_RECOMMENDATION_v1.md", ADVISORY,
+     "Where the Assistant should live -- recommended, not decided.", "",
+     "Self-declared 'Recommendation. Doctrine only -- no repository is created.' "
+     "ADVISORY so it cannot be read as having settled the question."),
+    ("ASSISTANT_PLUGIN_RESEARCH_TRUTH_DOCTRINE_V1", "Joe-Assistant",
+     "ASSISTANT_PLUGIN_CONSTITUTION_v1/06_KNOWLEDGE_RESEARCH_TRUTH_DOCTRINE_v1.md", CURRENT,
+     "What the Assistant may claim to know, and how a research answer is qualified.", "",
+     "Self-declared 'Approved Direction for Implementation'."),
+    ("ASSISTANT_PLUGIN_AMENDMENT_1_SIGNED", "Joe-Assistant",
+     "ASSISTANT_PLUGIN_CONSTITUTION_v1/AMENDMENT_1_TRANSMISSION_SIGNED.md", CURRENT,
+     "Amendment 1 to the Assistant Plugin Constitution, on transmission.", "",
+     "Self-declared 'SIGNED by Mike Zachary.'"),
+    ("ASSISTANT_PLUGIN_AMENDMENT_1_CONDITIONS", "Joe-Assistant",
+     "ASSISTANT_PLUGIN_CONSTITUTION_v1/AMENDMENT_1_TRANSMISSION_PROPOSED.md", CURRENT,
+     "The operating conditions Amendment 1 runs under.", "",
+     "A naming trap, and the clearest argument for a registry over a filename: the "
+     "file is called PROPOSED and its status line reads 'IN FORCE as the operating "
+     "conditions of Amendment 1.' Sorted by filename, the signed amendment looks "
+     "binding and this looks like a draft. Registered CURRENT on what it says about "
+     "itself; the contradiction is recorded, not resolved."),
+
+    ("DISPATCH_CF04_LIFECYCLE_AUTHORITY", "Dispatch",
+     "DISPATCH_CF04_LIFECYCLE_AUTHORITY_MODEL_v1.md", CURRENT,
+     "CF-04 adjudicated: the Spine is the authoritative lifecycle engine and "
+     "Opportunity advises.", "",
+     "Carries Mike's ruling verbatim, dated 2026-08-23, and CLAUDE.md 5.1 cites it. "
+     "An adjudicated ruling that was not in the registry."),
+    ("DISPATCH_CONFLICT_AUTHORITY_REGISTER", "Dispatch",
+     "DISPATCH_CONFLICT_AND_AUTHORITY_REGISTER.md", CURRENT,
+     "The CF-01 to CF-10 conflict register.", "",
+     "Deliberately NOT marked superseded. CF-04 supersedes the framing of one row out "
+     "of ten and the other nine are live, so flattening the document to SUPERSEDED "
+     "would bury nine open conflicts -- a worse error than one stale row. Read its "
+     "CF-04 row against DISPATCH_CF04_LIFECYCLE_AUTHORITY_MODEL_v1.md."),
+    ("DISPATCH_RECOVERY_WAVE_1_REPORT", "Dispatch",
+     "DISPATCH_RECOVERY_WAVE_1_REPORT.md", CURRENT,
+     "Recovery Wave 1 findings.", "",
+     "Same treatment as the conflict register: its CF-04 framing is superseded, the "
+     "rest of the report is not."),
+
+    ("CLAUDE_PROGRAM_MAP", "Claude", "DISPATCH_PROGRAM_MAP.md", ADVISORY,
+     "A total programme map, offered as a proposal.", "",
+     "Registered precisely because it reads as authoritative and is not. It scores "
+     "higher on authority language than CLAUDE.md, and its own header says 'Status: "
+     "Proposal / Planning Draft -- NOT an approved controlling document' and 'This "
+     "document is a recommendation only. No action is authorized.' An agent "
+     "cold-starting in Claude/ and finding a 'Total Program Map' could build from it. "
+     "ADVISORY says do not."),
 )
 
 ANSWERS = {

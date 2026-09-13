@@ -340,3 +340,48 @@ so nothing partial is left holding the name, and say to try again.
 That is the same rule as the proof path in Phase 2 and the manifest verifier in
 Phase 3: a success that cannot fail is not a success, it is a claim. *(1, 5, 6,
 7, 8)*
+
+## ADR-22 · Authority is structural, so the screen ranks and a person decides
+
+Phase 2 registered 23 governance documents and described the rest as context.
+Reasonable, and unchecked — and unchecked in the direction that costs most,
+because a document that quietly asserts authority and is not registered is
+invisible both to the drift detector and to anyone asking what governs.
+
+The obvious way to check is to score documents for binding language. That was
+built, and the result is worth keeping precisely because it failed:
+
+| document | score | actually |
+|---|---|---|
+| a registered CURRENT document | **0** | governs |
+| `Dispatch/CLAUDE.md` | **38** | the programme authority |
+| `Claude/DISPATCH_PROGRAM_MAP.md` | **65** | "NOT an approved controlling document" |
+
+Authority in this programme is **structural, not lexical**. `CLAUDE.md` governs
+because it declares itself the entry point and because its clauses are enforced
+by a test that fails a build. `DISPATCH_PROGRAM_MAP.md` does not govern, however
+many times it says "authority", because it says of itself that it does not. No
+count of words can tell those apart, and a tool that auto-registered by score
+would have registered the disclaimer and missed the constitution.
+
+So the tool is a **reading list**, and it says so in its own docstring: it
+screens, it does not conclude. What it bought was real — reading what it ranked
+found the Assistant Plugin Constitution, binding on all Assistant work by its
+own statement, cited by the decision log, governing this repository the whole
+time and never registered. Also CF-04's adjudicated ruling, cited by CLAUDE.md
+§5.1.
+
+Two refusals in the registrations themselves. `DISPATCH_CONFLICT_AND_AUTHORITY_
+REGISTER.md` is **not** marked SUPERSEDED even though CF-04 supersedes its CF-04
+framing: it holds ten conflicts and nine are live, so flattening the document
+would bury nine open questions to tidy one stale row. And
+`AMENDMENT_1_TRANSMISSION_PROPOSED.md` is registered CURRENT because its status
+line reads "IN FORCE" — the filename says PROPOSED, the contradiction is
+recorded rather than resolved, and it is the clearest single argument for a
+registry over a directory listing.
+
+The screen also now reports registered documents it cannot read. Its first run
+counted 22 against a registry of 23; the missing one was
+`tests/test_repository_doctrine.py` — governance that is executable, skipped for
+not being Markdown. A screen that silently loses a governing document is the
+failure it exists to prevent. *(1, 5, 8, 10)*

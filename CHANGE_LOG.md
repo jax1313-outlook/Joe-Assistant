@@ -6,6 +6,62 @@ Destination: `D:\Claude-Build`. Authority: Mike Zachary.
 
 ---
 
+## Phase 3 (continued) — 2026-09-13
+
+### Governance registry: scope checked rather than asserted
+
+`KNOWN_LIMITATIONS` §7 said the unregistered documents were "context, matrices
+and reports". Unchecked, and unchecked in the direction that costs most.
+
+Built `Governance/tools/screen_authority.py` to rank documents by binding
+language, and it **failed as a classifier** — which is the finding worth
+keeping:
+
+| document | score | actually |
+|---|---|---|
+| a registered CURRENT document | 0 | governs |
+| `Dispatch/CLAUDE.md` | 38 | the programme authority |
+| `Claude/DISPATCH_PROGRAM_MAP.md` | 65 | "NOT an approved controlling document" |
+
+Authority is structural, not lexical. So the tool ranks and a person reads.
+Reading what it surfaced found real gaps: **23 → 35 registered**.
+
+The largest was in this repository — the **Assistant Plugin Constitution**,
+"Doctrine. Binding on all Assistant work" by its own statement, whose Article II
+the decision log cites, unregistered the whole time. Also CF-04's adjudicated
+lifecycle ruling, cited by `CLAUDE.md` §5.1.
+
+Two deliberate refusals: the CF-01–CF-10 conflict register is **not** flattened
+to SUPERSEDED (nine of its ten conflicts are live), and
+`AMENDMENT_1_TRANSMISSION_PROPOSED.md` is registered CURRENT because its status
+line reads "IN FORCE" while its filename says PROPOSED.
+
+Also corrected: the "87 documents" figure. The real corpus is **425** Markdown
+files across the clones.
+
+### `0013` amended — the distance was one join away
+
+`transit_hours()` read `distance_miles` off the load, found it absent, and
+honestly reported that arrival times could not be projected. Accurate, and one
+join short: `RateConfirmation` carries it. So the forward walk was off for every
+load *including the ones with the data*. It now falls back to the rate
+confirmation — the better source anyway, being miles somebody committed to
+rather than an estimate.
+
+### `0015` — evidence over 4 MB uploads instead of being refused
+
+Files over 4 MB were refused by name. A driver photographing a bill of lading
+produces 3–8 MB routinely, so the refusal declined the ordinary case.
+
+Graph upload sessions, 5 MiB chunks, resuming from `nextExpectedRanges`. Two
+false-success defects found by writing the tests: reporting `LIVE` when Graph
+never returned the finished item, and when it returned a `200` with no `id`.
+Both now `UNVERIFIED` with the session cancelled.
+
+**Dispatch suite 4,217 → 4,220. Sandbox suite 681 → 692.**
+
+---
+
 ## Phase 3 — 2026-09-13
 
 Closed the two items Phase 2 recorded as unfinished. Both were fixed and

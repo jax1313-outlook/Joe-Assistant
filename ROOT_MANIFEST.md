@@ -7,7 +7,7 @@ Check it with:
 
     python Dispatch_Corrections/verify_manifest.py
 
-**523 files, 4,933,333 bytes.**
+**572 files, 5,037,072 bytes.**
 
 Excluded: `.git/`, `__pycache__/`, `.pytest_cache/`, compiled Python, the
 archive of this tree, and this file itself.
@@ -279,12 +279,12 @@ archive of this tree, and this file itself.
 | `Assistant_Plugin/library/sample_corpus/Operations/NOTES.txt` | 308 | `ec321e34f42cec7823439f6c3f25f1bcabecf8eec6779bddf0638193d016e611` |
 | `Assistant_Plugin/library/sample_corpus/Operations/RATE_FLOOR_POLICY.md` | 595 | `5778ade0629261da46b57c8ad210f68f8a05c93ccc70d111d3e38c5eda357837` |
 | `Assistant_Plugin/library/sample_corpus/README_CORPUS.md` | 442 | `a47ce375955d75805bdb1a78deada5b13e6d26be31fd14d1c91db3d16a8beb3a` |
-| `Assistant_Plugin/logs/joe.log` | 21150 | `8959216b00f796c2e8bc8ed18c9ec18779587d8df0e40869be7b2c60cd87ff23` |
+| `Assistant_Plugin/logs/joe.log` | 33840 | `131b4685a1231d156f0743f07c22c488b8bf9b5aee2e5edd05102996f5173fbc` |
 | `Assistant_Plugin/m365/__init__.py` | 539 | `c91773b89cec11c7afa0886bf28d0e39b0a7889f378b5fe8c46031063d3a0072` |
 | `Assistant_Plugin/m365/adapters/__init__.py` | 44 | `0fe0a98804276ff44a7ed288b5ae9eef3f086b1267dda170c371fc258f3341e0` |
-| `Assistant_Plugin/m365/adapters/graph.py` | 16554 | `818fc831d091251e18f07e445fe41702a1eeeeb266a4a478fb1e8a27d28042e0` |
+| `Assistant_Plugin/m365/adapters/graph.py` | 22716 | `14ca10476fa6d2d3a29abada3f29f733700aa4732833c4c2fc29981a2bc1db15` |
 | `Assistant_Plugin/m365/adapters/local.py` | 7128 | `521d9d857150275ac43c82fa55be1a7563d9affb4cd57291a25d3749441fd090` |
-| `Assistant_Plugin/m365/graph_client.py` | 9695 | `7d3ebeb574382bf9b0ae96912ea95f42a4134e604c33b8c996d34d6a5b41e872` |
+| `Assistant_Plugin/m365/graph_client.py` | 13064 | `638a0ea9ecb127035c87347f46756e5b49a99289069cda8e6faa8a1d0d4f9d70` |
 | `Assistant_Plugin/m365/ports.py` | 5459 | `28e83c191269b1b7eafd9b747c491870c7298056820d45e2eeb7eb5bba61ca29` |
 | `Assistant_Plugin/m365/registry.py` | 4726 | `7acc907c9a98c8969aa87f93722af8ead8fa6976f4457a9d1df252259ae8da90` |
 | `Assistant_Plugin/memory/assistant_memory/__init__.py` | 892 | `d775e929af8692b3d9a767e7bf58910fd4ddffd0e337a2df3bd342b2a824c1c3` |
@@ -417,11 +417,59 @@ archive of this tree, and this file itself.
 | `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-012958-86E4BE.json` | 972 | `fa0133dec2cf80f5fb8de6ecd8c275665d5fc32c09ac11083acc59ea697d9cdd` |
 | `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-012958-A27BAC.json` | 1097 | `9cc8d88800be4ea201a6616f11ce7e8518ac2aadc953e76a3e5599e858e1474b` |
 | `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-012958-E1B0E7.json` | 1017 | `34e1a65ffb64be89d3852e4a47a4205e85b27a6c9a2052cc8de436f7cd52f329` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020041-048314.json` | 972 | `0d4b45fb2bb26af9c8134d4430fb7983d6d0c30fab1b8bb25a96628bfd27100e` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020041-487C81.json` | 1018 | `68a17f6dcd07c50a1279a95ced98fc6092a2a67246b00b9f46780670b1f2a496` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020041-5D7BF6.json` | 972 | `86a1be543ba68732e9d09738c775180fc8ec5b551da386975411aef72ac74664` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020041-68DD59.json` | 972 | `d0b916668c61fd663764e981b5e3f318712c5427e93df52625ebe1eb27ffbcc6` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020041-6C410B.json` | 1017 | `6631fdfb659fe8ff5625cf80c249c91d8979f91419151380353905b34242e558` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020041-6F262F.json` | 1097 | `0e352052ec1979463c9a70fabca5b13a8789889fb6483a4272d5c72e1cc3e43c` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020041-DE1EA6.json` | 1008 | `de72260eacf1b9449277c76b75d981d6ccaccbb294bf53880d03cc600722c325` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020041-F033DE.json` | 994 | `7cd8a51258bdd4e0f309eccedbcb65348bff019840c0cac0a0c285ebfe25e708` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020050-00849E.json` | 994 | `8cf86fef3ed89e57fb93d497006b6ef4eda2f5a44755b7076e9b4bd9fddf0c9a` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020050-027843.json` | 1097 | `d6957274648e02d3c6d24d3b2c89f08fe4a921c280710fe77da792a65fd5e320` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020050-222175.json` | 1008 | `395bac026b755ec887d3c24bb1b1a86d50bdfa45a8aa68532eb8e22f510c8529` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020050-4C52F3.json` | 972 | `79f2c054fc97c566d3c21742278c42437f64e74be84fa836722298cbf8a1f3f0` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020050-5B4457.json` | 1018 | `559ea875ae2cb007eaa76947f37023e085c2222524c1b975ecf94c86f6892dca` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020050-962958.json` | 1017 | `70d181ee01a584c818d3c6ae2fec1a6245686b3706b2df49666066eb3ec30d7a` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020050-B90A9F.json` | 972 | `289235981de76ab854e41509507fe0df9534d57bfb3a7e60bac15e43a7d0ce5c` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-020050-CA3B2F.json` | 972 | `37a7529d572e87cad801d624c7803038dbb65e8a6a33b2a82e2d2b17f63f2c96` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024438-094599.json` | 994 | `a8312eaba00e8c37331aa915591b37796da42a4cbb397e965546a361c5b14ecb` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024438-5F772D.json` | 972 | `8dc7c9144834c3de7754c484d80c4b6e6fdd8925359e4703a6df2816fb163bce` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024438-6B22D7.json` | 1008 | `d9a3deecbafc56666eae890fc777a9158cce7f6db6fe486790cbc6c81cef45b5` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024438-88CC23.json` | 1097 | `a21acd7f9766f72b18e960e2d5dbc200556ec9026dfbcf1b939b1d69b578dcb6` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024438-9BF627.json` | 972 | `fd45636fdc5d04f27b6f7d6ff27d26254b7a6bb9c670e29cec9019c6c37f9f02` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024438-9E5866.json` | 1017 | `647495f383f9da62039b613d1524c59ab16fe5350b674ffda0aeaa482d403a4f` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024438-C51B2A.json` | 972 | `622e0b92e793aa6b5ed6bcb757c4c8efb041bde64c37b2c23ee2e6ec2c6d686c` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024438-CBF77D.json` | 1018 | `4377fb71f390fdc7a28d44afbd27701fa86e85909d2ff1604c1d1248ab1d7aed` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024447-1E27E5.json` | 994 | `01f4bdcc04534713efdc663e20b9f14d994c26c5651f72807376efd21cd1e701` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024447-30AAF5.json` | 1017 | `0bfc53661c930235a9a889d512cded4a2ef5c47395dc8f582eab21e0ee7a819e` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024447-87C3D2.json` | 972 | `a19fe145435ca9896277291faabb26dc1e2a23317592bc6f419e3802a6ea0398` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024447-ADC960.json` | 972 | `4d0e631f1dee809d2bc742ee19191c84b73545c6a20a58ca0a8c1922e8a93193` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024447-C77EAC.json` | 1018 | `904054ae0e6536974708e861dd197cb089086b58a2b2f32485929f3015f5f033` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024447-E898B3.json` | 1008 | `4d3ebffbcc216f7e05b5ec14cb74ccc17adc9d045721381c64e5e5a325bfc609` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024447-ECD808.json` | 1097 | `6bb3a52919f22464148a01d0ba809f06e74b7cd8aea14c6d33a064e06c37df43` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-024447-EE2E4D.json` | 972 | `7257c409cb4d85fd2027e0f278dc48f6c74be82d6b280755b6c8e7e719b1a8c3` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025802-095F21.json` | 972 | `5bf814bd8d254c01dcd56a8ef4bb10593bd3ee13edc0920bff7b05224d9ab039` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025802-2B7FEE.json` | 1097 | `4e1756e2cd794b3f94c68831200fa044ee2d6103e4065357851531c813107019` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025802-35E981.json` | 1018 | `d1f43370f7ae29463e0cbab5678a97d47bcca30a1a1064075dddb8754be540bb` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025802-6CD2A3.json` | 994 | `937cc93a661fc0802a4ac6ee9ac475f83b01e31f24490492c25a6b971a915450` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025802-75415A.json` | 972 | `64ea44ac43cfe48a6e0b7b46471edc1b299d6027153d6c11a28f9cacae8245b0` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025802-8EF7EC.json` | 972 | `ca50008cd7662c0a15833eae672aca732ebefcec2c9d2b884ea39876c00a68f9` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025802-91968E.json` | 1008 | `d415d5e57678c55be61a95e3b2406a13f6573edeb10bc54f4932dac509f8c717` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025802-A4F8CC.json` | 1017 | `9d66a7adf77d602215907391c04b896ee4d1e664d5f41a13299fd7b2c5f4efcc` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025814-10990D.json` | 1018 | `656c3f1f4fcd7c6d00b4d022c45f177975d4032f5fc686f88fd4934075ea5bfa` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025814-240A6F.json` | 972 | `754df7f6c485754461ef308d351cfad3a0fe3b590c0f90c4532536603d50703b` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025814-367804.json` | 972 | `d060ac8643d4498f70589c9026f900e07f0f1f2d11f971442c5d6488faa88d10` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025814-4928D0.json` | 994 | `f814112bd0de5295df665ad9ab8abd14e154424a425085ae46073dca4c5f2b25` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025814-8179AC.json` | 1008 | `f9567d75e0052da07680a0b76d3f099802c621ab368b3f66a5ff57fa864a046e` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025814-A7B36F.json` | 972 | `d4a66851903f716863ba9543c929c8f699d3af9b70c5787dfd54e6872796075e` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025814-BC902A.json` | 1017 | `9a3ad7df98217a7a8e99a4624c7e2a478ec4236f0c76af4fbffaef468f374b4e` |
+| `Assistant_Plugin/runtime_data/memory/Data/active/MEM-20260913-025814-FCF3D5.json` | 1097 | `7e87e5ba7aabda63178b8963235ef8bd88a413aa74dfaebec5eb294bad7a5f41` |
 | `Assistant_Plugin/tests/test_conversation.py` | 18322 | `59efe302582036908204f2dbf6f066d5128bb78390dad36b92a183fe525df1a0` |
 | `Assistant_Plugin/tests/test_field_capture.py` | 12295 | `b4523e8e6b3a2b3cbd6ece39b03aed695a5c32f6b6dd9f89ce9c2dcef6f04568` |
 | `Assistant_Plugin/tests/test_joe.py` | 165837 | `829e5f733b873595f5093134e764ef9539a4be04482075cc78748ddee9aa9580` |
 | `Assistant_Plugin/tests/test_listening_stops.py` | 3245 | `3c02a452ff8d438e9d5e4ca8034cfd4f950af0f970197125a26601253904e8d5` |
-| `Assistant_Plugin/tests/test_m365.py` | 14082 | `de06203b5761d826a7ecf8be403bdd0cd110f36b3ddc8f59866bbd4e63e8bc78` |
+| `Assistant_Plugin/tests/test_m365.py` | 22556 | `d19066c47c3e92c9938ec0c6e6d2abd2ccbea112f8d90650af3d977210a939b9` |
 | `Assistant_Plugin/tests/test_misheard_freight.py` | 5493 | `0cffb9bcfe3382d1a25bb5b1baa8493911784cab60328741c635194e83433a4a` |
 | `Assistant_Plugin/tests/test_opportunity_loop.py` | 6556 | `5c4f56819d4e72af4a454711787096799945c146a25c617425de5b75b1f6baa6` |
 | `Assistant_Plugin/tests/test_opportunity_parser.py` | 1296 | `df1174a6a17aa0655a813acfb84d166220a4ddb58bf841b84c677f588b23ebf7` |
@@ -463,11 +511,11 @@ archive of this tree, and this file itself.
 | `Dispatch_Corrections/FILE_INVENTORY.md` | 7919 | `5bd66172c160303ec1a08ec835ff5210830c83153855f6a3164851603220160f` |
 | `Dispatch_Corrections/README.md` | 4288 | `663f8876e9cf544b2238c964729dcbe1c000e7d38073fe06a570f1d421653f86` |
 | `Dispatch_Corrections/collect_evidence.py` | 22488 | `f348edbc998c2feead30844f67124272609d749ac5a9d5f38c18e98eecc8afba` |
-| `Dispatch_Corrections/docs/ARCHITECTURAL_DECISIONS.md` | 15547 | `04c0d44c9c0422a7635f647bd060bffb7ac9407e6123393dcff86e4e146246b0` |
+| `Dispatch_Corrections/docs/ARCHITECTURAL_DECISIONS.md` | 20111 | `53bcc985ae93f406bc6dac34c5991dff77ea525991189c13d55f39d5c74faa6f` |
 | `Dispatch_Corrections/docs/EXTERNAL_ACTIVATION.md` | 4989 | `a2b86fc90db7c77d68117b2aa551a2f16bcf1a6db6c7c8d0851cb9692bb3c910` |
 | `Dispatch_Corrections/docs/IMPLEMENTATION_SUMMARY.md` | 10236 | `1fa0e51746604889450f4cb289f0cefb517901c55b4c0a95d7960656f352167d` |
 | `Dispatch_Corrections/docs/JOE_IMPLEMENTATION.md` | 7861 | `883ae710b074855a1d20f344bd1fc7eabcbda0d3a26eb733038514c3ea7c526e` |
-| `Dispatch_Corrections/docs/KNOWN_LIMITATIONS.md` | 7450 | `ca517c572aeeebbc7281c7c01120679fa786c6c33607312eb166b352408a0c9d` |
+| `Dispatch_Corrections/docs/KNOWN_LIMITATIONS.md` | 9740 | `08565fdf7ed2ed02de6ae59d41a11823fd8c06f3e2824e9e186deb5e7711e6a5` |
 | `Dispatch_Corrections/docs/MERGE_PLAN.md` | 6153 | `78d5a077d523fb45f94b61e8078dc69125ceb99dbb2178ab1420ecb448d2fb52` |
 | `Dispatch_Corrections/docs/MIGRATION_PLAN.md` | 6757 | `a03ffdc9f9c235f8b3a40dddabadd22b6d5b95ff6c8daef1fcdb0da7c1e7c42e` |
 | `Dispatch_Corrections/docs/ROLLBACK_PLAN.md` | 6474 | `d8443f90c1cd1833bb0981f4f6d0e48c6831e4770d5ffc69f09da3c209534ba2` |
@@ -493,7 +541,7 @@ archive of this tree, and this file itself.
 | `Dispatch_Corrections/verify_manifest.py` | 4165 | `5ac66ff482b380075d916a072e30d540e5150768f6438c9a3b33ce49021a59ab` |
 | `Ergonomic Hybrid JOE Display.md` | 15299 | `be03c4cb04648b2ca2d9983b1577eb6101d45ee0bac4a40700e4d0d0c1f39f6c` |
 | `GOVERNANCE.md` | 2680 | `8344b284dff71ff6bff1a653abb4717770b0824355727b26862c125ad086b3fa` |
-| `Governance/GOVERNANCE_REGISTRY.json` | 14758 | `39585525389cb76445270d0a7273cb4a0406fc7e7b32bc932fe49a50c8a19d6b` |
+| `Governance/GOVERNANCE_REGISTRY.json` | 21905 | `82056839c9c0c641ed82a0e9ba7de029f242dc6df82137d29f6946e47ca16d6a` |
 | `Governance/GOVERNANCE_RESOLUTION_v1.md` | 9825 | `6b51fa22fbb188dbe05912d3ffbfdacde2ef510db9611814081e1fd64c77a4b6` |
 | `Governance/dispatch_governance/__init__.py` | 1514 | `cd2083f96fc61988de674eebf3f02568cc40a1ccd3f62e4e1b39d171d76baff3` |
 | `Governance/dispatch_governance/__main__.py` | 67 | `214038c12d8049858ade91ae0e8e61e37a2e13a274740080bbf3f2523fe7df23` |
@@ -504,7 +552,8 @@ archive of this tree, and this file itself.
 | `Governance/pointers/Joe-Assistant-GOVERNANCE.md` | 2680 | `8344b284dff71ff6bff1a653abb4717770b0824355727b26862c125ad086b3fa` |
 | `Governance/pointers/Publisher-GOVERNANCE.md` | 2568 | `ef15bacfb63a26f34e0be7645a5c6db8d71654df4c7a4c0078635e6d88834708` |
 | `Governance/tests/test_governance.py` | 12545 | `f9f7fda22607889f6b20197f38f2aeacf10a3299d95043c2b5b78cba005b05a3` |
-| `Governance/tools/record_registry.py` | 11768 | `2db505f55780b5dd31ef1904ab32b82c652d85c39a1799ccc51c74c26914c7f7` |
+| `Governance/tools/record_registry.py` | 16785 | `da472245fd75e76ebce2d7d7ad5a32526cc6968a97273d7b2aa51ea77bc5a64d` |
+| `Governance/tools/screen_authority.py` | 5726 | `f73a6252c4233d8f01db5d871f01abb83c6c9bcb91765e0b322f971d6869808e` |
 | `Governance/tools/write_pointers.py` | 5252 | `b5f0029de465647dbf21b11ad38f248887914ca189eeecd46b1345f7ea2f6a91` |
 | `Governing_Inputs/LEVEL1_ASSISTANT_AGENT_CONFIG_v1.txt` | 6850 | `bbb82cd68f4fc360a93dc13ab1ff232411cc2cc76da3ade8fab3d77aa1155127` |
 | `Governing_Inputs/LEVEL1_ASSISTANT_BUILD_PACKAGE_v1.docx` | 42016 | `b59a11a1e565095465b1dcf3a0544181767a98fe1d50d91cf02e8fe5cdb043f5` |

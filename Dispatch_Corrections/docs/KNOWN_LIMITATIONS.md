@@ -99,11 +99,42 @@ An amount that was never a whole number of cents — a third-party import, a
 four-decimal per-mile rate — is reported on `/maintenance` and left alone. Which
 way `10.007` should go is a decision about somebody's invoice.
 
-## 7. The governance registry covers 23 of 87 documents
+## 7. The registry covers 35 documents, and its scope is now checked  *(Phase 3)*
 
-The 23 are the ones that **assert authority**. The remaining 64 are context,
-matrices and reports. Registering them without reading each one would be the
-unverified claim the truth vocabulary exists to prevent.
+Phase 2 registered 23 and said the rest were "context, matrices and reports".
+That was a reasonable reading and it had never been checked, which made it
+exactly the kind of unverified claim the truth vocabulary exists to prevent --
+and it failed in the worst direction, because a document that quietly asserts
+authority and is not registered is invisible to the drift detector and to
+anyone asking what governs.
+
+`Governance/tools/screen_authority.py` scores every document by how binding its
+language is, and reading what it surfaced found real gaps. **35 documents are
+now registered**, 21 CURRENT, 6 SUPERSEDED, 4 HISTORICAL, 4 ADVISORY.
+
+The largest gap was in this repository: the **Assistant Plugin Constitution**,
+which says of itself "Doctrine. Binding on all Assistant work", whose Article II
+the decision log cites when ruling that JOE cannot transmit — and which was
+governing the Assistant work here the whole time without being registered.
+
+Also added: CF-04's adjudicated lifecycle ruling, cited by `CLAUDE.md` §5.1 and
+unregistered; and `Claude/DISPATCH_PROGRAM_MAP.md`, registered ADVISORY
+*because* it reads as authoritative and explicitly is not.
+
+**The screen is a reading list, not a classifier, and the numbers say why.**
+`Dispatch/CLAUDE.md`, the programme authority, scores 38. A registered CURRENT
+document scores **0**. `DISPATCH_PROGRAM_MAP.md`, which states "NOT an approved
+controlling document", scores **65** — higher than the constitution of the
+programme. Authority is structural, not lexical: `CLAUDE.md` governs because it
+declares itself the entry point and its clauses fail a build, not because of the
+words it uses. Nothing was registered by score; the screen only decided what got
+read.
+
+Two things are still true. 171 unregistered documents score above the threshold
+and have not each been read — the screen ranks, a person adjudicates, and that
+queue is open. And the count is now against 425 Markdown files across the
+clones, not the 87 Phase 2 cited; that figure was scoped to a narrower set and
+is corrected here.
 
 ## 8. Two governance findings are outstanding and correct
 
