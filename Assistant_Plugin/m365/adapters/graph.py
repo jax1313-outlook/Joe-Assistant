@@ -194,6 +194,38 @@ class GraphMail:
 # ------------------------------------------------------------------- onedrive
 
 
+#: Graph's ceiling for a single-request upload.
+SIMPLE_UPLOAD_LIMIT = 4 * 1024 * 1024
+
+#: Every chunk but the last must be a multiple of this, or Graph rejects the
+#: upload. Named rather than inlined so a future change to the chunk size cannot
+#: quietly pick a number Graph refuses.
+UPLOAD_CHUNK_UNIT = 320 * 1024
+
+#: 5 MiB -- sixteen units, inside Microsoft's recommended 5-10 MiB band, and
+#: small enough that a dropped connection costs one chunk rather than a file.
+UPLOAD_CHUNK_BYTES = 16 * UPLOAD_CHUNK_UNIT
+
+#: How many times a stalled upload asks Graph where to resume before giving up.
+#: Bounded, because an upload that cannot make progress should fail visibly
+#: rather than retry until the session expires an hour later.
+MAX_UPLOAD_RECOVERIES = 5
+
+assert UPLOAD_CHUNK_BYTES % UPLOAD_CHUNK_UNIT == 0, "Graph rejects a chunk that is not a multiple of 320 KiB"
+
+
+def _next_expected(body: dict, *, default):
+    """First byte of Graph's `nextExpectedRanges`, e.g. `["12345-"]`."""
+    ranges = (body or {}).get("nextExpectedRanges") or []
+    if not ranges:
+        return default
+    first = str(ranges[0]).split("-")[0].strip()
+    try:
+        return int(first)
+    except ValueError:
+        return default
+
+
 @dataclass
 class GraphFiles:
     """OneDrive as durable storage for evidence. Never as the system of record.
@@ -218,15 +250,12 @@ class GraphFiles:
         blocked = _guard(self.client)
         if blocked:
             return blocked
-        if len(content) > 4 * 1024 * 1024:
-            # Graph's simple upload stops at 4 MB; beyond that it is an upload
-            # session, which is a different flow and is not written.
-            return Result(
-                "ABSENT",
-                f"{len(content):,} bytes exceeds the 4 MB simple-upload limit. "
-                "A resumable upload session is not implemented.",
-                PROVIDER,
-            )
+        if len(content) > SIMPLE_UPLOAD_LIMIT:
+            # Graph's simple upload stops at 4 MB. Beyond that it is an upload
+            # session -- which matters here rather than being an edge case: a
+            # driver photographing a bill of lading produces 3-8 MB routinely,
+            # so refusing at 4 MB refused the ordinary case.
+            return self._put_resumable(path, content, content_type)
         try:
             item = self.client.put_bytes(
                 f"{self._item_path(path)}:/content", content,
@@ -240,6 +269,113 @@ class GraphFiles:
                           size=int(item.get("size", len(content))),
                           web_url=item.get("webUrl", ""),
                       ).to_dict()})
+
+    def _put_resumable(self, path: str, content: bytes, content_type: str) -> Result:
+        """Stream a file too large for a single request, and resume if it breaks.
+
+        Three things about this flow are easy to get wrong and are done
+        deliberately here.
+
+        **Chunks are a multiple of 320 KiB.** Graph requires it of every chunk
+        but the last, and rejects the upload otherwise. The constant is named
+        rather than inlined so the next person changing the chunk size cannot
+        quietly pick a number that Graph refuses.
+
+        **A failure asks before it repeats.** On a retryable error the session
+        is queried for `nextExpectedRanges` and the upload continues from what
+        Graph actually holds. Restarting from zero would be a large upload, not
+        a resumable one, and on a phone tether that is the difference between
+        finishing and never finishing.
+
+        **An unrecoverable failure cancels the session.** Leaving it to expire
+        would hold the partial file, and the point of failing is to leave
+        nothing behind that looks like a delivery.
+        """
+        total = len(content)
+        item_path = self._item_path(path)
+        try:
+            session = self.client.create_upload_session(item_path)
+        except Exception as exc:  # noqa: BLE001
+            return _translate(exc)
+
+        upload_url = session.get("uploadUrl", "")
+        if not upload_url:
+            return Result(
+                "UNAVAILABLE",
+                "Microsoft Graph accepted the upload-session request and returned "
+                "no uploadUrl, so there is nowhere to send the file.",
+                PROVIDER,
+            )
+
+        start = 0
+        recoveries = 0
+        item: dict = {}
+        while start < total:
+            chunk = content[start:start + UPLOAD_CHUNK_BYTES]
+            try:
+                status, body = self.client.upload_chunk(
+                    upload_url, chunk, start=start, total=total
+                )
+            except Exception as exc:  # noqa: BLE001
+                if not getattr(exc, "retryable", False) or recoveries >= MAX_UPLOAD_RECOVERIES:
+                    self.client.cancel_upload_session(upload_url)
+                    return _translate(exc)
+                recoveries += 1
+                resumed = self._resume_point(upload_url)
+                if resumed is None:
+                    self.client.cancel_upload_session(upload_url)
+                    return _translate(exc)
+                start = resumed
+                continue
+
+            if status in (200, 201):
+                # A 2xx is not by itself the finished item. Graph answers the
+                # last chunk with the DriveItem, and a body without an `id` is
+                # not one -- treating it as the item would report a stored file
+                # with no identifier, which reads as success and is not.
+                if (body or {}).get("id"):
+                    item = body
+                    break
+                item = {}
+                break
+            # 202: Graph took it and says where to carry on from. Its own answer
+            # is trusted over our arithmetic, because it is the one that knows
+            # what actually landed.
+            start = _next_expected(body, default=start + len(chunk))
+
+        if not item:
+            # Every byte was sent and Graph never answered with the finished
+            # DriveItem. The bytes may well be there -- but "may well be" is not
+            # a delivery, and reporting LIVE here would be a success claim with
+            # no evidence behind it, which is the one thing this whole layer
+            # exists to avoid.
+            self.client.cancel_upload_session(upload_url)
+            return Result(
+                "UNVERIFIED",
+                f"All {total:,} bytes of {path} were sent and Microsoft Graph "
+                "never returned the finished item, so Dispatch cannot confirm "
+                "the file is stored. The upload session has been cancelled; "
+                "try again.",
+                PROVIDER,
+            )
+
+        return Result(
+            "LIVE",
+            f"Stored {path} in OneDrive as a {total:,}-byte resumable upload"
+            + (f" after {recoveries} resume{'s' if recoveries != 1 else ''}." if recoveries else "."),
+            PROVIDER,
+            {"file": StoredFile(
+                file_id=item.get("id", ""), name=item.get("name", path),
+                size=int(item.get("size", total)), web_url=item.get("webUrl", ""),
+            ).to_dict(), "resumed": recoveries},
+        )
+
+    def _resume_point(self, upload_url: str) -> int | None:
+        """Where Graph says to carry on from, or None if it cannot say."""
+        try:
+            return _next_expected(self.client.upload_session_status(upload_url), default=None)
+        except Exception:  # noqa: BLE001 - the original failure is the one to report
+            return None
 
     def get(self, *, path: str) -> Result:
         blocked = _guard(self.client)

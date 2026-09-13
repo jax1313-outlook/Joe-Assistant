@@ -33,10 +33,10 @@ in either repository claims otherwise.
 | A calendar mirror / `sync` | `CLAUDE.md` §5.5 forbids a second scheduling system. |
 | A Teams bot | A bot answering in a channel is a second interface to Dispatch with its own authority story, and no doctrine covers one. |
 | `.docx` authoring | Graph converts an uploaded document to PDF; it does not author one. Writing OOXML is a dependency and a body of work not taken. A `.docx` request is refused **by name**. |
-| Resumable uploads | Files over 4 MB are refused with the reason. Graph's simple upload stops there. |
-| Azure Speech adapters | Status reporting is written; the adapters are not. The stack falls back to the text engines and reports `SIMULATED`. |
+| Azure Speech adapters | Status reporting is written; the adapters are not. Unlike the upload limit above, this one cannot be proved here at all — speech is a network service with no recorded protocol shape to test against, and no credentials exist in this environment. Writing it would produce code no test could distinguish from a stub. |
+| ~~Resumable uploads~~ | **Built in Phase 3.** Files over 4 MB now use a Graph upload session, in 5 MiB chunks, resuming from `nextExpectedRanges` after a dropped connection. The old 4 MB refusal was not declining an edge case: a driver photographing a bill of lading produces 3-8 MB routinely, so the ordinary case was the one being refused. |
 | A local SharePoint or Teams substitute | A folder on this laptop is not a shared site, and writing a file does not tell anybody. Both report `ABSENT`. |
-| Locking on the remaining JSON stores | Only the **lockout counter** moved to SQLite. Eleven other stores in `portal/models/` still lose a concurrent update, and `portal/models/__init__.py` still says so. See §5. |
+| ~~Locking on the remaining JSON stores~~ | **Built in Phase 3.** All 41 mutating functions across all 11 stores hold a cross-process lock across the whole read-modify-write. See §5. |
 
 ## 4. The capacity engine is wired, and its stops are now built  *(Phase 3)*
 

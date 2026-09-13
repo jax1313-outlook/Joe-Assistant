@@ -304,3 +304,39 @@ one that dropped a record.
 It was tested in both directions — exit 1 on a tampered file, exit 0 on a clean
 tree — because a verifier that cannot fail proves nothing, which is the same
 argument as the proof-path repair in Phase 2. *(1, 5, 8, 10)*
+
+## ADR-21 · A large upload resumes, and an unconfirmed one is not a success
+
+Files over 4 MB were refused by name, with the reason. That reads like a
+sensible boundary until you ask what is actually over 4 MB: a driver
+photographing a bill of lading on a phone, which is 3-8 MB routinely. The
+refusal was not declining an edge case. It was declining the ordinary one, on
+the surface that matters most.
+
+Graph's upload session is the answer, and three parts of it are decisions
+rather than transcription.
+
+**Chunks are 5 MiB, and the size is asserted.** Graph rejects any chunk but the
+last that is not a multiple of 320 KiB. That constraint is invisible in the
+code that reads a chunk size, so it is a named constant with a module-level
+assertion beside it — a future tuning that picks a friendlier-looking number
+fails at import rather than in the field.
+
+**A failure asks before it repeats.** On a retryable error the session is
+queried for `nextExpectedRanges` and the upload continues from what Graph
+actually holds, bounded to five recoveries. Restarting from zero would be a
+large upload, not a resumable one, and on a phone tether that is the difference
+between finishing and never finishing. Where Graph's answer disagrees with our
+own arithmetic, Graph wins: it is the one that knows what landed.
+
+**Bytes sent is not a delivery.** Two defects were found by writing the tests
+rather than the code, and they are the same defect twice. The first version
+reported `LIVE` when every chunk was accepted but Graph never returned the
+finished item. The second reported `LIVE` when Graph answered `200` with a body
+that had no `id` in it. In both cases the file may well have been there — and
+"may well be" is not evidence. Both now report `UNVERIFIED`, cancel the session
+so nothing partial is left holding the name, and say to try again.
+
+That is the same rule as the proof path in Phase 2 and the manifest verifier in
+Phase 3: a success that cannot fail is not a success, it is a claim. *(1, 5, 6,
+7, 8)*

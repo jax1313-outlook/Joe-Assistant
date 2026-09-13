@@ -145,6 +145,61 @@ class GraphClient:
 
     # ----------------------------------------------------------------- request
 
+    # ---------------------------------------------------------- upload sessions
+
+    def create_upload_session(self, item_path: str, *, conflict: str = "replace") -> dict:
+        """Ask Graph for a URL to stream a large file into.
+
+        Returns Graph's session, whose `uploadUrl` is **pre-authorised**: it
+        carries its own credential in the URL and must not be sent an
+        Authorization header. Attaching one is a documented way to get the
+        upload rejected, which is why every call below passes
+        `authenticated=False`.
+        """
+        return self.post(
+            f"{item_path}:/createUploadSession",
+            {"item": {"@microsoft.graph.conflictBehavior": conflict}},
+        )
+
+    def upload_chunk(self, upload_url: str, chunk: bytes, *, start: int, total: int):
+        """Send one byte range. Returns `(status, body)`.
+
+        `202` means the chunk landed and Graph wants the next one; the body
+        carries `nextExpectedRanges`. `200` or `201` means that was the last
+        chunk and the body is the finished DriveItem.
+        """
+        end = start + len(chunk) - 1
+        return self._request(
+            "PUT", upload_url, raw=chunk,
+            content_type="application/octet-stream",
+            want_status=True, authenticated=False,
+            extra_headers={
+                "Content-Range": f"bytes {start}-{end}/{total}",
+                "Content-Length": str(len(chunk)),
+            },
+        )
+
+    def upload_session_status(self, upload_url: str) -> dict:
+        """What Graph still expects. This is what makes an upload resumable.
+
+        After a dropped connection the bytes already accepted are still there.
+        Asking rather than restarting is the entire difference between a
+        resumable upload and a large one.
+        """
+        return self._request("GET", upload_url, authenticated=False)
+
+    def cancel_upload_session(self, upload_url: str) -> None:
+        """Give the incomplete upload back rather than leaving it to expire.
+
+        Best effort: a session that is already gone is the outcome we wanted,
+        so a failure here is not worth raising over a failure that already
+        happened.
+        """
+        try:
+            self._request("DELETE", upload_url, authenticated=False)
+        except Exception:  # noqa: BLE001 - cleanup, never the reported failure
+            pass
+
     def _url(self, path: str, params: dict) -> str:
         if path.startswith("http"):
             return path
@@ -156,13 +211,18 @@ class GraphClient:
 
     def _request(self, method: str, url: str, *, payload: dict | None = None,
                  raw: bytes | None = None, content_type: str = "",
-                 want_bytes: bool = False, _refreshed: bool = False):
-        try:
-            token = self.token_provider.access_token()
-        except Exception as exc:  # noqa: BLE001 - auth failures are reported, not raised through
-            raise GraphUnauthorized(str(exc), status=401, retryable=False) from exc
-
-        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+                 want_bytes: bool = False, want_status: bool = False,
+                 authenticated: bool = True, extra_headers: dict | None = None,
+                 _refreshed: bool = False):
+        headers = {"Accept": "application/json"}
+        if authenticated:
+            try:
+                token = self.token_provider.access_token()
+            except Exception as exc:  # noqa: BLE001 - auth failures are reported, not raised through
+                raise GraphUnauthorized(str(exc), status=401, retryable=False) from exc
+            headers["Authorization"] = f"Bearer {token}"
+        if extra_headers:
+            headers.update(extra_headers)
         body = raw
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")
@@ -180,19 +240,29 @@ class GraphClient:
                     content = response.read()
                     if want_bytes:
                         return content
-                    if not content:
-                        return {}
-                    return json.loads(content.decode("utf-8"))
+                    body = json.loads(content.decode("utf-8")) if content else {}
+                    if want_status:
+                        # An upload session answers 202 for "chunk accepted, send
+                        # the next" and 200/201 for "that was the last one, here
+                        # is the item". The body alone cannot tell them apart.
+                        return getattr(response, "status", 200) or 200, body
+                    return body
             except urllib.error.HTTPError as exc:
                 status = exc.code
                 detail, code = _read_error(exc)
 
-                if status == 401 and not _refreshed:
+                if status == 401 and authenticated and not _refreshed:
                     # One refresh, one retry. A second 401 after a fresh token is
                     # a permissions problem, and retrying it changes nothing.
+                    #
+                    # Not for an upload session: its URL carries its own
+                    # pre-authorisation and a 401 there means the session is
+                    # gone, which a new access token does not bring back.
                     return self._request(
                         method, url, payload=payload, raw=raw, content_type=content_type,
-                        want_bytes=want_bytes, _refreshed=True,
+                        want_bytes=want_bytes, want_status=want_status,
+                        authenticated=authenticated, extra_headers=extra_headers,
+                        _refreshed=True,
                     )
                 if status in RETRYABLE_STATUS and attempt < self.max_attempts:
                     self.sleeper(_wait_for(exc, attempt))

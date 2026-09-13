@@ -41,8 +41,12 @@ class Token:
 
 
 class Response:
-    def __init__(self, payload=None, raw=None):
+    def __init__(self, payload=None, raw=None, status=200):
         self._body = raw if raw is not None else json.dumps(payload or {}).encode()
+        #: An upload session distinguishes "chunk accepted, send the next" (202)
+        #: from "that was the last one" (200/201) by status alone -- the bodies
+        #: do not say.
+        self.status = status
 
     def read(self): return self._body
     def __enter__(self): return self
@@ -72,11 +76,13 @@ class Opener:
         return answer
 
 
-def client(*answers, token=None, slept=None):
+def client(*answers, token=None, slept=None, max_attempts=None):
+    kw = {} if max_attempts is None else {"max_attempts": max_attempts}
     return GraphClient(
         token_provider=token or Token(),
         opener=Opener(*answers),
         sleeper=(slept.append if slept is not None else (lambda s: None)),
+        **kw,
     )
 
 
@@ -224,10 +230,20 @@ class TestMailFilesSiteChatDocuments:
         assert payload["message"]["toRecipients"][0]["emailAddress"]["address"] == "ops@broker.test"
         assert result.real
 
-    def test_a_file_over_four_megabytes_is_refused_by_name(self):
-        result = GraphFiles(client()).put(path="big.pdf", content=b"x" * (5 * 1024 * 1024))
-        assert result.status == "ABSENT"
-        assert "resumable upload session is not implemented" in result.detail
+    def test_a_file_over_four_megabytes_uses_an_upload_session(self):
+        """It used to be refused. A driver's bill-of-lading photo is routinely
+        3-8 MB, so the refusal refused the ordinary case."""
+        size = 6 * 1024 * 1024  # two chunks: 5 MiB then 1 MiB
+        graph = client(
+            Response({"uploadUrl": "https://up/1"}),
+            Response({"nextExpectedRanges": ["5242880-"]}, status=202),
+            Response({"id": "F9", "name": "big.pdf", "size": size,
+                      "webUrl": "https://one/big"}, status=201),
+        )
+        result = GraphFiles(graph).put(path="big.pdf", content=b"x" * size)
+        assert result.status == "LIVE", result.detail
+        assert result.data["file"]["file_id"] == "F9"
+        assert result.data["resumed"] == 0
 
     def test_a_file_is_stored_with_its_identifiers(self):
         graph = client(Response({"id": "F1", "name": "bol.pdf", "size": 12,
@@ -319,3 +335,157 @@ class TestTheResultType:
     def test_simulated_is_ok_but_not_real(self):
         result = Result("SIMULATED", "wrote a file")
         assert result.ok and not result.real
+
+
+class TestResumableUpload:
+    """Files over 4 MB used to be refused by name.
+
+    That refusal was not an edge case being declined: a driver photographing a
+    bill of lading produces 3-8 MB routinely, so the ordinary case was the one
+    being refused. These cover the session flow, and most of them are about the
+    ways it could report a success it has no evidence for.
+    """
+
+    def _content(self, mib):
+        return b"x" * (mib * 1024 * 1024)
+
+    def test_the_chunk_size_is_a_multiple_of_320_kib(self):
+        """Graph rejects any chunk but the last that is not. A named constant
+        and an assertion, so a future tuning cannot quietly break uploads."""
+        from m365.adapters.graph import UPLOAD_CHUNK_BYTES, UPLOAD_CHUNK_UNIT
+
+        assert UPLOAD_CHUNK_UNIT == 320 * 1024
+        assert UPLOAD_CHUNK_BYTES % UPLOAD_CHUNK_UNIT == 0
+        assert 5 * 1024 * 1024 <= UPLOAD_CHUNK_BYTES <= 10 * 1024 * 1024
+
+    def test_a_small_file_still_takes_the_simple_path(self):
+        """One request, not a session. The session is overhead where it is not
+        needed."""
+        graph = client(Response({"id": "S1", "name": "small.pdf", "size": 10}))
+        result = GraphFiles(graph).put(path="small.pdf", content=b"x" * 10)
+        assert result.real
+        assert len(graph.opener.requests) == 1
+        assert "createUploadSession" not in graph.opener.requests[0].full_url
+
+    def test_the_session_url_is_never_sent_an_authorization_header(self):
+        """The uploadUrl carries its own pre-authorisation. Attaching a bearer
+        token to it is a documented way to have the upload rejected."""
+        graph = client(
+            Response({"uploadUrl": "https://up/1"}),
+            Response({"id": "F1", "size": 6 * 1024 * 1024}, status=201),
+        )
+        GraphFiles(graph).put(path="b.pdf", content=self._content(6))
+        session_request = graph.opener.requests[0]
+        chunk_request = graph.opener.requests[1]
+        assert "Authorization" in session_request.headers
+        assert "Authorization" not in chunk_request.headers, chunk_request.headers
+
+    def test_each_chunk_declares_its_byte_range(self):
+        graph = client(
+            Response({"uploadUrl": "https://up/1"}),
+            Response({"nextExpectedRanges": ["5242880-"]}, status=202),
+            Response({"id": "F1", "size": 6 * 1024 * 1024}, status=201),
+        )
+        GraphFiles(graph).put(path="b.pdf", content=self._content(6))
+        ranges = [r.headers.get("Content-range") for r in graph.opener.requests[1:]]
+        total = 6 * 1024 * 1024
+        assert ranges[0] == f"bytes 0-5242879/{total}"
+        assert ranges[1] == f"bytes 5242880-{total - 1}/{total}"
+
+    def test_graphs_own_next_expected_range_is_trusted_over_our_arithmetic(self):
+        """Graph is the one that knows what actually landed. If it says resume
+        from somewhere other than where we counted to, it wins."""
+        total = 6 * 1024 * 1024
+        graph = client(
+            Response({"uploadUrl": "https://up/1"}),
+            Response({"nextExpectedRanges": ["1000-"]}, status=202),
+            Response({"id": "F1", "size": total}, status=201),
+        )
+        GraphFiles(graph).put(path="b.pdf", content=b"x" * total)
+        assert graph.opener.requests[2].headers.get("Content-range").startswith("bytes 1000-")
+
+    def test_a_dropped_connection_resumes_where_graph_says(self):
+        """The whole point of resumable. Restarting from zero would be a large
+        upload, not a resumable one, and on a phone tether that is the
+        difference between finishing and never finishing."""
+        total = 6 * 1024 * 1024
+        # max_attempts=1 so the client's own retry budget does not absorb the
+        # failure before the adapter's resume path can see it. Both layers are
+        # real; this test is about the outer one.
+        graph = client(
+            Response({"uploadUrl": "https://up/1"}),
+            http_error(503),                                  # chunk 1 dies
+            Response({"nextExpectedRanges": ["5242880-"]}),   # session status
+            Response({"id": "F1", "size": total}, status=201),
+            max_attempts=1,
+        )
+        result = GraphFiles(graph).put(path="b.pdf", content=b"x" * total)
+        assert result.real, result.detail
+        assert result.data["resumed"] == 1
+        assert "1 resume" in result.detail
+        assert graph.opener.requests[-1].headers.get("Content-range").startswith("bytes 5242880-")
+
+    def test_an_unrecoverable_failure_cancels_the_session(self):
+        """Leaving it to expire holds a partial file, and the point of failing
+        is to leave nothing behind that looks like a delivery."""
+        total = 6 * 1024 * 1024
+        graph = client(
+            Response({"uploadUrl": "https://up/1"}),
+            http_error(403),   # not retryable
+            Response({}),      # the DELETE
+        )
+        result = GraphFiles(graph).put(path="b.pdf", content=b"x" * total)
+        assert not result.real
+        assert graph.opener.requests[-1].get_method() == "DELETE"
+
+    def test_it_gives_up_rather_than_resuming_forever(self):
+        """A bounded number of recoveries. An upload that cannot make progress
+        should fail visibly, not retry until the session expires an hour later."""
+        from m365.adapters.graph import MAX_UPLOAD_RECOVERIES
+
+        total = 6 * 1024 * 1024
+        answers = [Response({"uploadUrl": "https://up/1"})]
+        for _ in range(MAX_UPLOAD_RECOVERIES + 2):
+            answers.append(http_error(503))
+            answers.append(Response({"nextExpectedRanges": ["0-"]}))
+        answers.append(Response({}))
+        graph = client(*answers, slept=[], max_attempts=1)
+        result = GraphFiles(graph).put(path="b.pdf", content=b"x" * total)
+        assert not result.real
+
+    def test_a_session_with_no_upload_url_is_not_a_success(self):
+        graph = client(Response({}))
+        result = GraphFiles(graph).put(path="b.pdf", content=self._content(6))
+        assert result.status == "UNAVAILABLE"
+        assert "nowhere to send" in result.detail
+
+    def test_bytes_sent_without_a_confirmed_item_is_unverified_not_live(self):
+        """The bug this test was written for. If every chunk is accepted with a
+        202 and Graph never returns the finished item, the bytes may well be
+        there -- but 'may well be' is not a delivery, and LIVE would be a
+        success claim with no evidence behind it."""
+        total = 6 * 1024 * 1024
+        graph = client(
+            Response({"uploadUrl": "https://up/1"}),
+            Response({"nextExpectedRanges": ["5242880-"]}, status=202),
+            Response({"nextExpectedRanges": []}, status=202),   # never a 200/201
+            Response({}),                                        # the DELETE
+        )
+        result = GraphFiles(graph).put(path="b.pdf", content=b"x" * total)
+        assert result.status == "UNVERIFIED", result.detail
+        assert "cannot confirm" in result.detail
+        assert graph.opener.requests[-1].get_method() == "DELETE"
+
+    def test_an_unconfigured_client_never_starts_a_session(self):
+        from m365.adapters.graph import GraphFiles as GF
+
+        graph = client()
+        graph.token_provider = type("Dead", (), {
+            "status": staticmethod(lambda: "UNCONFIGURED"),
+            "access_token": staticmethod(lambda: (_ for _ in ()).throw(RuntimeError("no"))),
+            "account": staticmethod(lambda: ""),
+        })()
+        result = GF(graph).put(path="b.pdf", content=self._content(6))
+        assert not result.real
+        assert graph.opener.requests == []
+
