@@ -7,7 +7,7 @@ Check it with:
 
     python Dispatch_Corrections/verify_manifest.py
 
-**452 files, 4,997,876 bytes.**
+**453 files, 5,024,077 bytes.**
 
 Excluded: `.git/`, `__pycache__/`, `.pytest_cache/`, compiled Python, the
 archive of this tree, this file itself, and everything `.gitignore` names --
@@ -430,7 +430,7 @@ which is where the runtime token cache and the memory records live.
 | `Governance/tools/write_pointers.py` | 5252 | `b5f0029de465647dbf21b11ad38f248887914ca189eeecd46b1345f7ea2f6a91` |
 | `Governing_Inputs/LEVEL1_ASSISTANT_AGENT_CONFIG_v1.txt` | 6850 | `bbb82cd68f4fc360a93dc13ab1ff232411cc2cc76da3ade8fab3d77aa1155127` |
 | `Governing_Inputs/LEVEL1_ASSISTANT_BUILD_PACKAGE_v1.docx` | 42016 | `b59a11a1e565095465b1dcf3a0544181767a98fe1d50d91cf02e8fe5cdb043f5` |
-| `KNOWN_LIMITATIONS.md` | 13900 | `379180a93c8deb28dfeeb5504e1559bab32c642cfa340955eba6665feff36d5e` |
+| `KNOWN_LIMITATIONS.md` | 16755 | `2ae2bc793d5d1e223739abd5a54e798ead4fed330c4a1f3036ca4bdf477897fb` |
 | `MERGE_PLAN.md` | 9126 | `9b9fb7a016184a4ffe4badf67867de73f37c9b69796652afb028e99a359b05e7` |
 | `PHASE_2_DELIVERABLE.md` | 3809 | `ffb1c9ddc152717954529a8ea24fbd80c45fd835201f169b78836d18132b9813` |
 | `Play-Pen/jules_session_12863749728267333928.zip` | 962609 | `07a063f4a17268401cfe909394f5c656677c43745b85219059038e0e66df2256` |
@@ -442,27 +442,28 @@ which is where the runtime token cache and the memory records live.
 | `Sandbox/active/SBX-20260824-204540-FB57EE.json` | 862 | `a6395274f2a519d6354a738bbf430ba6a2eedfbea7f26f7c64a4f0a826089cb7` |
 | `Sandbox/deleted/SBX-20260824-204540-B579BA.json` | 790 | `a9a269e8c0b3be16d477a477debf5da83849ad6b53ac34fc03c65e52489c7fe9` |
 | `Screens` | 1 | `01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b` |
-| `TEST_EVIDENCE.md` | 18876 | `7ba91b58df9cea0c472190ad9daa64e9e302fb17186eddf184df7b44c008a8e0` |
+| `TEST_EVIDENCE.md` | 23853 | `9725f29dea1f77321a99ce7df3a5a251473296bed4e34f50b462e4f959eb4305` |
 | `TRANSFER_TO_D_DRIVE.md` | 4023 | `bd49cc9d55bfa69cc22b10a3170636d4d88f237f7a9e717eba8b871f7ffc802d` |
 | `Testing/LOCAL_PROOF_REPORT_v1.md` | 8404 | `67b6d336b114d5343b5e099dc67c8cdb5e2efe619ed1f252e8e9973d9f3dd30a` |
 | `Testing/SANDBOX_ENGINE_TEST_REPORT_v1.md` | 9227 | `739d9d3e2bfcc819230cc418f30e4f8dea1cd1fd5f915289843273bf49d0af51` |
 | `Testing/_last_test_run.txt` | 6610 | `1f01423a15a531589ec7020ba2e757a9f413ed97eaf73b243fb3caa137b67717` |
 | `Testing/_proof_expiry/Sandbox/expired/SBX-20260824-204541-0CF24E.json` | 840 | `987c911972b4b405654470b19c45c3573c568c138473e695349ce43576ae6fe3` |
+| `Testing/phase_a_walkthrough.py` | 10552 | `f1eb0661cae0151728d328816f64aea1f12e5ef2fbdbb26f93a2fca6414634fa` |
 | `Testing/proof_local.py` | 24354 | `0d1ddbada3797127f4d2825dc817cfb6323cfdd6dd838cd35330ef8a7af905ae` |
 | `Testing/test_package_excludes_runtime_state.py` | 5642 | `c0e2ff06de57f542dbe961da9d51cc3a988dc788bc6b647b2748a154ae1679d9` |
 | `Testing/test_sandbox_engine.py` | 23030 | `8734c844136f801b78e8d9e81fe436692ddbbcbbcb333d11e41ab3a1ebaff151` |
 | `Workers/tests/test_worker_bus.py` | 17406 | `8bc53d1cb3de0f029f382c9338f78c891959e082fe73033038873760049855bb` |
-| `Workers/tests/test_worker_cli.py` | 9175 | `95e2e7b9e9175ba6d1d0356047cc5304425e5c0daecc2958aca702217ef27345` |
-| `Workers/tests/test_worker_host.py` | 15814 | `915b151b9b7e6ed05c6f1866f6ef067afb1b157b767180d01230562106547f4f` |
+| `Workers/tests/test_worker_cli.py` | 10122 | `f98763647849adcf84c794f59e6fe9c378b83ccbcb5c6797f409150a163a3a2b` |
+| `Workers/tests/test_worker_host.py` | 18366 | `ffc8d7a50028efa1a844013cf6bcab4161ff8905929f77e2c66a646a87e184dd` |
 | `Workers/worker_bus/__main__.py` | 6758 | `a288dcb0a99b8950333e0b58c8ec36c37fa61d313cf7915a0012315b06f45a66` |
 | `Workers/worker_bus/audit.py` | 3401 | `6e3fbe59bb40fe3a4d97a02860cb069891fb9b74a8618620ebb115fd33409f4d` |
 | `Workers/worker_bus/bus.py` | 11474 | `cdd29c1815c499f48c4c190e336207bb33b06d21deae3f6970be67b9b4491aa9` |
 | `Workers/worker_bus/contracts.py` | 7460 | `d3a33cbad55276f4fbcd3a1ad273a9129ffc4e63fc41c1d4e5f14f9760dde731` |
-| `Workers/worker_bus/host.py` | 8495 | `8eab316b4e817d720d9fa6fd1abf28c559480e26772908e22c893864649b747a` |
+| `Workers/worker_bus/host.py` | 11151 | `989d87ab6a1a3095238d8691be5a366bff7288a7a36f4cc3aaeb362fbeafb93c` |
 | `Workers/worker_bus/workers/__init__.py` | 739 | `5005f139de1b0caf59db8d8085841a1f8ebb36846a299001bac7a5191d4bf997` |
 | `Workers/worker_bus/workers/intelligence.py` | 9687 | `c42bd4e529b78f650e4e4114e05a45cc647554659169abc9da8d807325308f3b` |
 | `Workers/worker_bus/workers/joe.py` | 8046 | `d54c4bea2b57ae2e87640f23f266726c4f997369557194b7e79686bb9418deaa` |
-| `Workers/worker_bus/workers/library.py` | 3362 | `6d46185a36e559836e1fba5252f5def045582778fb337817c51012356fdcacaf` |
+| `Workers/worker_bus/workers/library.py` | 5024 | `0b37347ccb6138a5bb0f9717aef75ac401f4156afa584bfb90579b1481799131` |
 | `Workers/worker_bus/workers/publisher.py` | 8381 | `e8d3e5805b3208baf3b2c1c8890e4ff4b251ee7955a729569904f34b351518ba` |
 | `conftest.py` | 2173 | `3947cbef021f00e380acaab4d1b1a5600129f84c6cfa919d2cc6cf541363ce26` |
 | `docs/M365_ACTIVATION.md` | 7639 | `103cce10a835d98e7048444357324104f895731ee2d9587eb23f16a7ef872b48` |

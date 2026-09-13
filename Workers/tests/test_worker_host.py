@@ -349,3 +349,57 @@ class TestTheLaneComparison:
         response = _ask(build_bus(), "INTELLIGENCE", "assess_load", subject["load_id"])
         assert response.status == "LIVE"
         assert "RATE_BELOW_LANE_HISTORY" not in {f.code for f in response.findings}
+
+
+class TestTheLibraryIsOneShelf:
+    """The defect Phase A found on its first run.
+
+    `LibraryService()` builds a fresh `ObjectRegistry` -- a dict -- on every
+    call, so two services in one process are two different shelves. Each
+    `build_bus()` made its own, and the CLI builds a bus per command. A
+    template ingested through one Library was invisible to the PUBLISHER
+    holding the other, which reported TEMPLATE_NOT_IN_LIBRARY for a template
+    that had just been accepted. Every test passed; the walkthrough failed at
+    step three.
+    """
+
+    def test_two_buses_hold_the_same_library(self):
+        from worker_bus.host import library_service
+
+        if library_service() is None:
+            pytest.skip("Library repo is not on this machine")
+        assert build_bus().get("LIBRARY").service is build_bus().get("LIBRARY").service
+
+    def test_a_template_accepted_once_is_visible_to_a_later_bus(self, monkeypatch):
+        import worker_bus.host as host
+
+        if host.library_service() is None:
+            pytest.skip("Library repo is not on this machine")
+        # A fresh shelf for this test alone. The real one is process-wide by
+        # design, and a test that ingests into it leaves a template behind for
+        # every test that runs after it -- which is exactly how a shared shelf
+        # is supposed to behave, and exactly why this one must put it back.
+        from dispatch_library.service import LibraryService
+
+        monkeypatch.setattr(host, "_LIBRARY_SERVICE", LibraryService())
+        library = host.library_service()
+        library.ingest_human_document(
+            object_code="TPL-ONE-SHELF", collection="Templates",
+            title="One shelf", body_or_uri="body", accepted_by="Mike Zachary",
+        )
+        later = build_bus().get("LIBRARY")
+        assert later._asset("TPL-ONE-SHELF") is not None
+
+    def test_the_library_reports_live_when_the_real_one_is_behind_it(self):
+        from worker_bus.host import library_service
+
+        if library_service() is None:
+            pytest.skip("Library repo is not on this machine")
+        assert build_bus().get("LIBRARY").status() == "LIVE"
+
+    def test_an_injected_shelf_still_wins(self):
+        """Tests and hosts that pass their own assets must not be handed the
+        process Library instead -- an explicit argument is a decision."""
+        bus = build_bus(assets={"TPL-X": {"object_code": "TPL-X"}})
+        assert bus.get("LIBRARY").service is None
+        assert bus.get("LIBRARY")._asset("TPL-X") == {"object_code": "TPL-X"}

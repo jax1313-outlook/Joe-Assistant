@@ -28,14 +28,46 @@ def _library_available() -> bool:
 @dataclass
 class LibraryWorker:
     worker_id: str = "LIBRARY"
-    #: In-memory asset shelf for the sandbox. The real adapter replaces this
-    #: with dispatch_library.LibraryService; the shape it answers in does not
-    #: change, which is the point of having a contract.
+    #: In-memory asset shelf. Used when no real Library is reachable, and by the
+    #: tests, which must not depend on a sibling repository being checked out.
     assets: dict = None
+    #: A real `dispatch_library.LibraryService`, when one is present. It answers
+    #: in the same shape as the shelf -- that equivalence is the whole point of
+    #: the contract -- but it is versioned, it enforces the collection taxonomy,
+    #: and it refuses a system identity as an accepting authority.
+    service: object | None = None
 
     def __post_init__(self) -> None:
         if self.assets is None:
             self.assets = {}
+
+    # ------------------------------------------------------------- the shelf
+    #
+    # One pair of accessors, so every capability below reads the same way
+    # whether the answer came from the real Library or the in-memory shelf.
+
+    def _asset(self, asset_id: str) -> dict | None:
+        """One CURRENT object, as a plain dict, or None.
+
+        The real Library answers with a `LibraryObject` carrying its version,
+        status, accepting authority and collection. Those are not decoration:
+        Publisher's refusal to use an unapproved template rests on them, so they
+        travel rather than being flattened away.
+        """
+        if self.service is not None:
+            obj = self.service.current(asset_id)
+            return obj.to_dict() if obj is not None else None
+        return self.assets.get(asset_id)
+
+    def _shelf(self, kind: str) -> dict:
+        """Everything currently on the shelf, optionally one collection of it."""
+        if self.service is not None:
+            objects = self.service.list_current(kind or None)
+            return {o.object_code: o.to_dict() for o in objects}
+        return {
+            asset_id: asset for asset_id, asset in self.assets.items()
+            if not kind or asset.get("kind") == kind
+        }
 
     def capabilities(self) -> tuple[Capability, ...]:
         return (
@@ -53,6 +85,10 @@ class LibraryWorker:
         )
 
     def status(self) -> str:
+        # A real service is LIVE whether or not anything is on the shelf yet: an
+        # empty Library is a Library with nothing in it, not an absent one.
+        if self.service is not None:
+            return "LIVE"
         if self.assets:
             return "SIMULATED" if not _library_available() else "LIVE"
         return "UNCONFIGURED"
@@ -60,7 +96,7 @@ class LibraryWorker:
     def handle(self, request: WorkerRequest, deps) -> WorkerResponse:
         if request.capability == "fetch_asset":
             asset_id = request.payload.get("asset_id", "")
-            asset = self.assets.get(asset_id)
+            asset = self._asset(asset_id)
             if asset is None:
                 return WorkerResponse(
                     worker=self.worker_id, capability=request.capability,
@@ -80,10 +116,7 @@ class LibraryWorker:
             )
 
         kind = request.payload.get("kind", "")
-        matching = {
-            asset_id: asset for asset_id, asset in self.assets.items()
-            if not kind or asset.get("kind") == kind
-        }
+        matching = self._shelf(kind)
         return WorkerResponse(
             worker=self.worker_id, capability=request.capability,
             status=self.status() if matching else "ABSENT",

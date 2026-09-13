@@ -382,7 +382,94 @@ Full list: `KNOWN_LIMITATIONS.md`.
 
 ---
 
-## 8. Reproducing all of it
+## 8. Phase A — the walkthrough, and what it found
+
+**Mike authorised this on 2026-09-13: "yes ops@l1truck.com is correct, wire the
+real library and start phase A."**
+
+Phase A is everything except delivery: Library → Publisher → COMI → Email Helper
+→ a composed message addressed to `ops@l1truck.com`. No tenant, no credentials,
+no Microsoft call. It is one script, `Testing/phase_a_walkthrough.py`, and it
+uses the real components rather than doubles — the real `LibraryService`, the
+real Dispatch store, the real worker bus, the real COMI sanitiser, the real
+Email Helper. Run it:
+
+```bash
+PYTHONPATH=/path/to/Dispatch python Testing/phase_a_walkthrough.py
+```
+
+### It failed twice before it passed
+
+Both failures were in code with passing tests over it. Both were seams between
+two components that no test crossed. **This is the sixth and seventh instance of
+that pattern in this build**, and it is now the most reliable predictor of where
+a defect is: not inside a component, but between two of them.
+
+**Run 1 — step 3.** Two templates were accepted into the Library. Publisher, asked
+for one of them by name, answered:
+
+```
+  [ABSENT] TEMPLATE_NOT_IN_LIBRARY: Library has no approved template 'TPL-BROKER-CLOSEOUT'.
+```
+
+`LibraryService()` builds a fresh `ObjectRegistry` on every call, and
+`library_service()` called it every time — so each `build_bus()` held a different
+shelf. The template was on one; Publisher was holding another. Fixed: one
+Library per process. Pinned by `TestTheLibraryIsOneShelf`.
+
+**Run 2 — step 8.** The message was written, and the transport's own status line
+pointed somewhere else:
+
+```
+  written to   .../Archive/CIN/Outbox/completion-LOAD-...-ops@l1truck.com.eml
+  transport    "SIMULATED -- Archive/Outbox .eml fallback (.../Archive/Outbox)"
+```
+
+With nothing configured the writer is not `FileOutboxTransport` at all.
+`dispatch.outbound.install()` engages only for Graph and XOAUTH2, so
+`cin_lite._send_or_write` runs its own fallback and writes under
+`Archive/CIN/Outbox`. `FileOutboxTransport.outbox()` computed its own answer and
+was wrong, and `describe()` is the only thing read for the default transport —
+so the one sentence an operator has to go on named an empty directory. Both now
+ask `cin_lite.email_delivery.outbox_dir()`.
+
+Neither defect changes what Dispatch does. The second changed only what it says,
+which is the one thing the transport layer exists to get right.
+
+### What the passing run establishes
+
+| Step | Asked | Answer |
+|---|---|---|
+| 1 | Two templates into the real Library, accepted by Mike Zachary | Both `CURRENT` v1. `accepted_by="PUBLISHER"` **refused** — "must identify a real human or approved-workflow reviewer, not a system identity" |
+| 2 | One complete load: rate confirmation 2850.00 flat / 142 mi, POD, 1 evidence item, 4 milestones | Seeded |
+| 3 | `PUBLISHER check_readiness` with `template_id=TPL-BROKER-CLOSEOUT` | `LIVE` — "Ready to assemble" |
+| 4 | `assemble_completion_package` with no authorisation | **`ABSENT`**, refused under `human_authorization_required` |
+| 4 | Same, after recording the decision as a Dispatch checkpoint milestone and passing `authorized_by="Mike Zachary"`, `authorization_ref="milestone:MS-..."` | `LIVE` — "a draft until a person reviews and submits it", `review_required = True` |
+| 5 | COMI `sanitize_payload_for_role(..., "broker")` | Withheld `profit`, `margin_pct`, `total_expenses`, `internal_note`. Passed `load_id`, `revenue`, both locations |
+| 6 | Render the Library template with the load's own facts | Real load id, real POD id, real evidence count, real rate |
+| 7 | `submit_package(submitted_by="PUBLISHER")` | **Refused** — "cannot be submitted without a real, external, non-system submitted_by identity" |
+| 7 | `submit_package(submitted_by="Mike Zachary")` | `SUBMITTED`, one recipient: `ops@l1truck.com` |
+| 8 | Open the file | A complete RFC 5322 message, `To: ops@l1truck.com`, correct subject, the rendered template as its body |
+
+Four refusals fired on their own. Each one is a gate that would have to hold on
+a real tenant, and each held here without being asked twice.
+
+### What it does not establish
+
+- **No email was delivered to `ops@l1truck.com` or to anyone else.** The
+  transport reported `SIMULATED`, `delivering: false`, `simulated: true`. A
+  `.eml` on disk is a record that Dispatch *would have* sent something. **Nobody
+  received it.** Nothing in this section should be read as a successful send.
+- **Nothing ran against Microsoft.** Phase B — `DISPATCH_MS_TENANT`,
+  `DISPATCH_MS_CLIENT_ID`, `DISPATCH_EMAIL_FROM`, `DISPATCH_TRANSPORT=graph`,
+  then a device-code sign-in — is Mike's to start and has not been started.
+- **The Library forgot everything when the script exited.** See
+  `KNOWN_LIMITATIONS.md` §14.
+- **One load, one template, one lane.** A walkthrough is not a test suite.
+
+---
+
+## 9. Reproducing all of it
 
 ```bash
 # Sandbox
@@ -397,4 +484,7 @@ python -m pytest -o addopts="" -q --cov --cov-config=.coveragerc   # 91.48%
 
 # The package itself
 python Dispatch_Corrections/verify_manifest.py
+
+# Phase A, end to end (§8)
+PYTHONPATH=/path/to/Dispatch python Testing/phase_a_walkthrough.py
 ```

@@ -90,6 +90,61 @@ def ensure_plugin_importable() -> bool:
     return True
 
 
+#: Where the Library repository sits, if it is checked out beside this one.
+#: Joe-Assistant/Workers/worker_bus/host.py -> ... -> work/ -> Library/src/
+_LIBRARY_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "Library" / "src"
+
+
+def ensure_library_importable() -> bool:
+    """Put `dispatch_library` on the import path, if the Library repo is here.
+
+    The Library is its own repository with its own remote -- THE MIKE RULE keeps
+    it liftable -- so this is a path, not a dependency. Its absence is not an
+    error: `build_bus()` falls back to the in-memory shelf and LIBRARY reports
+    UNCONFIGURED, which is the true answer on a machine with no Library.
+
+    Returns whether it is present.
+    """
+    if not _LIBRARY_ROOT.is_dir():
+        return False
+    if str(_LIBRARY_ROOT) not in sys.path:
+        sys.path.insert(0, str(_LIBRARY_ROOT))
+    return True
+
+
+#: One Library per process. See library_service().
+_LIBRARY_SERVICE = None
+
+
+def library_service():
+    """The process's `LibraryService`, or None if the Library is not here.
+
+    **One service per process, not one per bus.** `LibraryService()` builds a
+    fresh `ObjectRegistry` -- a dict -- every time it is called, so two services
+    in one process are two different shelves: a template ingested through one is
+    invisible to the other. `build_bus()` is called more than once in a single
+    run (the CLI builds one per command), so handing each bus its own service
+    made PUBLISHER report TEMPLATE_NOT_IN_LIBRARY for a template the caller had
+    just ingested. Caching it is what makes "the real Library" mean one shelf.
+
+    The registry is still **in memory**: nothing is written to disk, so the
+    shelf empties when the process exits. That limit is real and unfixed here --
+    a template ingested in one command is not there for the next one. It is
+    recorded in KNOWN_LIMITATIONS.md, not worked around.
+    """
+    global _LIBRARY_SERVICE
+    if _LIBRARY_SERVICE is not None:
+        return _LIBRARY_SERVICE
+    if not ensure_library_importable():
+        return None
+    try:
+        from dispatch_library.service import LibraryService
+    except Exception:  # noqa: BLE001 - absence is a status, never a crash
+        return None
+    _LIBRARY_SERVICE = LibraryService()
+    return _LIBRARY_SERVICE
+
+
 class DispatchUnavailable(RuntimeError):
     """Dispatch could not be imported. Reported, never raised at a worker."""
 
@@ -187,7 +242,12 @@ def build_bus(*, reader=None, reasoner=None, assets=None, audit=None) -> WorkerB
     bus.register(IntelligenceWorker(reader=reader))
     bus.register(PublisherWorker(reader=reader))
     bus.register(JoeWorker(reader=reader, reasoner=reasoner))
-    bus.register(LibraryWorker(assets=assets or {}))
+    # A real Library when one is reachable; the in-memory shelf otherwise. An
+    # explicit `assets` argument still wins, so a test can pin the shelf without
+    # depending on whether a sibling repository happens to be checked out.
+    bus.register(
+        LibraryWorker(assets=assets or {}, service=None if assets else library_service())
+    )
     return bus
 
 
@@ -202,6 +262,7 @@ def describe() -> dict:
     return {
         "dispatch_readable": dispatch_available(),
         "plugin_present": ensure_plugin_importable(),
+        "library_present": ensure_library_importable(),
         # bus.roster() is the bus's own public answer to "who is registered and
         # what can they do". Reaching into its private dict to build a second
         # version of that would be two answers to one question.

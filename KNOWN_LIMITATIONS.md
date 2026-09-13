@@ -231,3 +231,45 @@ fix is a fixture change in each, and the risk it created -- shipping a token
 cache -- is closed at the packaging boundary where it can be pinned by one test
 rather than by remembering. Named here so the next person does not conclude the
 tree-writing is intentional.
+
+## 14. The Library is wired, and the Library forgets  *(Phase A)*
+
+`build_bus()` now hands `LibraryWorker` a real `LibraryService` when the Library
+repository is on the machine, and LIBRARY reports `LIVE` instead of
+`UNCONFIGURED`. Publisher asks that Library for its templates; Phase A placed
+two approved templates on the shelf and Publisher found them. See
+`TEST_EVIDENCE.md` §8.
+
+**The shelf is a dict in memory.** `dispatch_library.registry.ObjectRegistry`
+writes nothing to disk, so every object placed in the Library lives exactly as
+long as the process that placed it. A template accepted by one command is not
+there for the next one. That is why the walkthrough is one script rather than a
+sequence of `python -m worker_bus` invocations: run it as separate commands and
+Publisher correctly reports `TEMPLATE_NOT_IN_LIBRARY` every time.
+
+This is **not fixed here**, and the reason is a boundary rather than effort.
+Persistence is a decision about the Library's own storage — what format, where
+on disk, what happens to version history, who may write — and the Library is a
+separate repository under THE MIKE RULE. Choosing its storage from inside the
+Assistant sandbox would be exactly the kind of cross-repo decision §5.4 exists
+to prevent. What is fixed is the part that was a plain defect: one process now
+holds **one** Library rather than one per `build_bus()` call.
+
+**What this means in practice:** the Library is usable within a single program
+run and unusable across runs. Anything that needs templates to survive a
+restart needs the Library to gain storage first. Until then, treat an empty
+Library after a restart as correct behaviour, not a bug.
+
+## 15. Two things that were wrong and are now right  *(Phase A)*
+
+Both were found by running the walkthrough, and both had passing tests over
+them. Recorded here because the pattern matters more than either defect:
+**every one of them was a seam between two components that no test crossed.**
+
+| Was | Is |
+|---|---|
+| `library_service()` returned a new `LibraryService` per call, so each `build_bus()` held its own shelf and Publisher could not see a template the caller had just accepted. | One Library per process. Pinned by `Workers/tests/test_worker_host.py::TestTheLibraryIsOneShelf`. |
+| The default transport's status named `Archive/Outbox`. Every `.eml` this program has ever written landed in `Archive/CIN/Outbox`, because with nothing configured the writer is `cin_lite`, not `FileOutboxTransport` — `dispatch.outbound.install()` engages only for Graph and XOAUTH2. An operator following the status found an empty directory. | Both ask `cin_lite.email_delivery.outbox_dir()`. The sentence and the file are the same sentence. |
+
+Neither changes what Dispatch *does*. The second changes only what it *says*,
+which is the thing the transport layer was built to get right.

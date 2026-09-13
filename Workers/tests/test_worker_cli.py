@@ -19,6 +19,21 @@ from worker_bus.__main__ import main
 
 
 @pytest.fixture()
+def no_library(monkeypatch):
+    """A machine with no Library repo on it.
+
+    The Library is a separate repository -- THE MIKE RULE keeps it liftable --
+    so its absence is an ordinary configuration, not a broken install, and the
+    CLI has to be readable on a machine that does not have it.
+    """
+    import worker_bus.host as host
+
+    monkeypatch.setattr(host, "_LIBRARY_SERVICE", None)
+    monkeypatch.setattr(host, "ensure_library_importable", lambda: False)
+    yield
+
+
+@pytest.fixture()
 def seeded(tmp_path, monkeypatch):
     """A real Dispatch with one real load, exactly as the host tests build it."""
     pytest.importorskip("dispatch")
@@ -58,7 +73,9 @@ class TestStatus:
     def test_json_is_machine_readable(self, capsys):
         assert main(["--json", "status"]) == 0
         report = json.loads(capsys.readouterr().out)
-        assert set(report) == {"dispatch_readable", "plugin_present", "workers"}
+        assert set(report) == {
+            "dispatch_readable", "plugin_present", "library_present", "workers"
+        }
         assert {w["worker"] for w in report["workers"]} == {
             "INTELLIGENCE", "PUBLISHER", "JOE", "LIBRARY"
         }
@@ -122,15 +139,23 @@ class TestItRefusesReadably:
         assert "subject_not_found" in out
         assert "does not fill in a gap out loud" in out
 
-    def test_an_unusable_answer_exits_non_zero(self, capsys):
-        """The Library shelf is empty here, so the answer is ABSENT. A script
-        reading exit 0 would treat "there is nothing" as a result."""
+    def test_an_unusable_answer_exits_non_zero(self, no_library, capsys):
+        """With no Library on the machine there is no shelf to read, so the
+        answer is ABSENT. A script reading exit 0 would treat "there is
+        nothing" as a result.
+
+        This asks for a machine without the Library deliberately. A real
+        Library that happens to be empty is LIVE and exits 0 -- "the shelf is
+        there and nothing is on it" is a usable answer, and collapsing it into
+        the same word as "there is no shelf" is the distinction the whole
+        vocabulary exists to keep.
+        """
         code = main(["ask", "LIBRARY", "list_assets"])
         out = capsys.readouterr().out
         assert code == 1, out
         assert out.splitlines()[0] == "LIBRARY list_assets: ABSENT"
 
-    def test_an_answer_that_is_only_artifacts_still_says_something(self, capsys):
+    def test_an_answer_that_is_only_artifacts_still_says_something(self, no_library, capsys):
         """ABSENT with no detail and no findings prints as one bare word. What
         came back is shown instead -- which is a fact, where a sentence written
         here to fill the space would be an invention."""
