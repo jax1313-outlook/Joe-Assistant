@@ -59,7 +59,7 @@ python -m dispatch_governance answer "may a Manager component be built into Disp
 | Joe's reasoning and voice, provider-neutral | `Assistant_Plugin/conversation/`, `voice/providers.py` |
 | Microsoft 365, replaceable wheel | `Assistant_Plugin/m365/` — six ports, one client, local substitutes |
 | Sixteen completion-evidence items | `Dispatch_Corrections/evidence/COMPLETION_EVIDENCE.md` |
-| Merge package | `Dispatch_Corrections/docs/MERGE_PLAN.md` + rollback + verification + migration |
+| Merge package | `MERGE_PLAN.md` + rollback + verification + migration |
 
 ## The numbers
 
@@ -79,4 +79,4 @@ repository. Two governance findings are outstanding and correct — `Claude/` an
 `Publisher/` need a pointer file each, and this work may only write here.
 `DISPATCH_CONSTITUTION_v3`'s ratification status requires Mike.
 
-Full list: `Dispatch_Corrections/docs/KNOWN_LIMITATIONS.md`.
+Full list: `KNOWN_LIMITATIONS.md`.

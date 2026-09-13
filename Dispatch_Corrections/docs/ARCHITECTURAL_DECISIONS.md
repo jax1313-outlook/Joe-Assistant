@@ -385,3 +385,56 @@ counted 22 against a registry of 23; the missing one was
 `tests/test_repository_doctrine.py` — governance that is executable, skipped for
 not being Markdown. A screen that silently loses a governing document is the
 failure it exists to prevent. *(1, 5, 8, 10)*
+
+---
+
+## ADR-23 · The workers get a host, and then a way to be run by a person
+
+`Workers/worker_bus/` defined Intelligence, Publisher, Joe and Library with
+bounded contracts, a mediator, an audit log and thirty-nine passing tests. The
+bus was constructed in exactly one place: `Workers/tests/test_worker_bus.py`.
+Nothing in Dispatch or the Assistant Plugin ever built one.
+
+That is the fourth appearance in this programme of a single defect shape — the
+capacity engine (1,861 lines, no caller), the proof-path commands (documented,
+non-existent), the JSON stores' half-guarantee, and now the bus. **Passing tests
+over code nothing calls** is the hardest defect to see from inside a repository,
+because every signal a builder normally trusts reports success.
+
+Two decisions, taken separately because they are two gaps.
+
+**`host.py` — one assembly point, and the read boundary is data.** `READ_METHODS`
+is a nine-row tuple naming every `dispatch.store` function the Assistant may
+call. A test walks it and fails if any row resolves to a function that writes,
+so `CLAUDE.md` §5.4 — *"No direct Dispatch write authority may be granted to
+Assistant"* — is enforced rather than commented, and widening what a worker can
+see means editing that tuple, in public, on purpose. A reviewer asking "what can
+Joe see?" reads one tuple instead of four workers.
+
+`DispatchReader` is a frozen dataclass with no write method to reach, rather
+than a wrapper around `store` that promises to behave. The difference matters
+under review: one is a policy, the other is a shape.
+
+**`__main__.py` — because a `build_bus()` nothing invokes is the same defect one
+layer up.** `describe()` was written to answer "what can these workers do on
+this machine" and nothing could call it. `python -m worker_bus status` answers
+it without running a worker (D9: retrieval is not modification), and
+`python -m worker_bus ask JOE read_back_load load_id=...` runs exactly one
+capability. The status word prints first, on its own line, because it is what
+decides whether the sentence below it can be trusted.
+
+**There is deliberately no `--authorized-by` flag.** `CLAUDE.md` §4.3 forbids
+manufacturing a Mike attribution "not as a default, not as a seed, not as a test
+fixture, not as an inference", and a name typed at an unauthenticated prompt is
+all four. So the one capability that requires a recorded human decision refuses
+from the command line every time, and the refusal names what would satisfy it.
+A refusal is the feature.
+
+Two defects surfaced by writing the tests rather than by reading the code. Joe
+imported his conversation layer at call time with no guard, so on a machine
+without it a driver asking for a read-back got a `ModuleNotFoundError`; it now
+reports `UNCONFIGURED` with a sentence a person can act on — §5.4's *"Degradation
+is permitted. Incapacity is not."* And an empty Library shelf answered `ABSENT`
+with no detail and no findings, which on a terminal is one bare word and no
+reason; the command now prints the artifacts that came back rather than a
+sentence the worker never said. *(1, 3, 4, 6, 9)*

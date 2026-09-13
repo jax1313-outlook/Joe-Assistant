@@ -29,7 +29,11 @@ Everything in this repository. The package is the whole thing, not a subset.
 If you prefer the archive: `claude-build-phase3.zip` in the repository root
 expands to a single top-level folder named `Claude-Build`, so extracting it at
 the root of `D:` puts everything in `D:\Claude-Build` with nothing to rename.
-It excludes `.git/` and the caches; the manifest covers exactly what is in it.
+It excludes `.git/`, the caches, and everything `.gitignore` names — which is
+where the runtime token cache and the memory records live. It is built *from*
+the manifest, so the archive and the checksums cannot describe different sets of
+files, and `ROOT_MANIFEST.md` travels inside it so an unpacked copy can check
+itself.
 
 ---
 
@@ -39,8 +43,10 @@ From `D:\Claude-Build`, with Python 3.11+:
 
     python -m pytest -q
 
-Expected: **681 passed, 12 skipped**. The twelve skips are Tk display tests,
-which have no display in a container and will run on the laptop.
+Expected: **738 passed, 12 skipped**. The twelve skips are environment
+conditional and each says which thing it needs: six want a signed-in token
+cache, five want `tkinter`, and one wants `ASSISTANT_TEST_OUTLOOK=1`. They will
+run on the laptop once it is set up.
 
 `ROOT_MANIFEST.md` lists every file with its SHA-256. To check nothing was lost
 or altered in transit:
@@ -53,20 +59,22 @@ It prints one line per mismatch and exits non-zero if there is any.
 
 ## What is in here that belongs to Dispatch rather than to this repository
 
-`Dispatch_Corrections/patches/` holds fourteen patches against production
+`Dispatch_Corrections/patches/` holds seventeen patches against production
 Dispatch. They are **not applied** to any Dispatch clone by this package.
 
 - `0001`–`0012` are Phase 2, already open as pull requests #130–#142 against
   `jax1313-outlook/Dispatch`, in that order.
-- `0013`–`0014` are Phase 3 and are **not** open as pull requests. They are held
-  here awaiting your decision.
+- `0013`–`0017` are Phase 3 and the mission review, and are **not** open as pull
+  requests. They are held here awaiting your decision. Merging the pull requests
+  does not bring them — `0013` in particular is the one that makes PR #140's
+  capacity wiring reach anything.
 
 Applying them is a separate act, and it is yours:
 
     git checkout -b <branch> origin/main
     git am /path/to/Dispatch_Corrections/patches/00*.patch
 
-`Dispatch_Corrections/docs/MERGE_PLAN.md` gives the order and the rollback.
+`MERGE_PLAN.md` gives the order and the rollback.
 
 ---
 
@@ -76,7 +84,11 @@ Applying them is a separate act, and it is yours:
 - It must not have another platform's findings merged into it.
 - It carries no credentials. Every Microsoft capability reads `UNCONFIGURED`
   because none has been configured, and no token, secret or connection string is
-  in this tree. `Dispatch_Corrections/docs/` records the scan.
+  in the package. `Dispatch_Corrections/docs/` records the scan.
+- Running the suite leaves runtime files in the tree — a token cache directory
+  and memory records under `Assistant_Plugin/runtime_data/`. The packager
+  excludes them and a test pins that it does, so they cannot reach `D:`. An
+  earlier archive did carry 129 of them; see `KNOWN_LIMITATIONS.md` §13.
 
 ---
 
@@ -86,5 +98,5 @@ Nothing in this build has run on your machine. The first genuinely new
 information will come from `DISPATCH_START_HERE.cmd` on the laptop, and from
 walking the twenty-step proof path — which now runs, and has never been walked.
 
-Mike remains final authority. Two items are waiting on you specifically; they
+Mike remains final authority. Three items are waiting on you specifically; they
 are §5 of `BUILD_SUMMARY.md`.

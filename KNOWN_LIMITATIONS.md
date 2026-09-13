@@ -8,8 +8,9 @@ deployment proof.*
 
 ## 1. Nothing here has been run on Mike's machine
 
-The Dispatch suite is 4,171 passing tests and the sandbox suite is 681. Both are
-evidence of **software behaviour**. Neither says whether Dispatch starts on a
+The Dispatch suite is 4,221 passing tests and the sandbox suite is 738 passing
+with 12 environment-conditional skips. Both are evidence of **software
+behaviour**. Neither says whether Dispatch starts on a
 Windows laptop, finds the `D:` drive, or keeps a load across a restart.
 
 The twenty-step proof path now *runs*, which it did not before. It has not been
@@ -176,10 +177,37 @@ shared runner tests the runner.
 credentials or a Whisper model that is the text engines, which report
 `SIMULATED`: text in, text out. Nothing was heard and nothing was said aloud.
 
-## 12. The worker bus is in-process
+## 12. The worker bus is in-process, and now has a host  *(mission review)*
 
 Intelligence, Publisher and Joe are separate *programs* with separate
 repositories, connected here by an in-process mediator. That is the right shape
 for a single-operator laptop and it is not a distributed system: there is no
 queue, no retry across a restart, and no way for a worker to run on another
 machine. Making it one is a different design and nothing here assumes it.
+
+Until the mission review, nothing built the bus outside its own tests.
+`Workers/worker_bus/host.py` builds it with a read-only view of Dispatch, and
+`python -m worker_bus` runs it from a command line. Against a real load all
+three primary duties answer `LIVE`. See `TEST_EVIDENCE.md` §4.
+
+**Still not built, and deliberately:**
+
+| Not built | Why |
+|---|---|
+| A long-running worker process | There is nothing to serve. The bus answers one question and exits, which is what a single-operator laptop needs; a daemon needs a supervisor, a restart policy and a story about what happens when it dies mid-answer, and none of that is warranted yet. |
+| A call from Dispatch itself | Dispatch must run without its plug-ins (`CLAUDE.md` §5.4), and adding a call site inside Dispatch is a change to Dispatch, not to this sandbox. The host is the seam that makes such a call a few lines when Mike wants one. |
+| Authorisation from the command line | Deliberate refusal, not a gap. §4.3 forbids manufacturing a Mike attribution, and a name typed at a prompt is not an authenticated action. The one capability that needs a recorded decision refuses from here and says what would satisfy it. |
+
+## 13. The sandbox suite writes runtime state into its own tree  *(mission review)*
+
+Running the suite leaves files under `Assistant_Plugin/runtime_data/` -- a token
+cache directory and memory records. They are correctly `.gitignore`d and never
+committed, and `Dispatch_Corrections/verify_manifest.py` now refuses to package
+or archive anything `.gitignore` names, so they cannot reach `D:\Claude-Build`.
+
+The tests writing there rather than into a temporary directory is the underlying
+defect and it is **not fixed**. It spans a large number of plug-in tests, the
+fix is a fixture change in each, and the risk it created -- shipping a token
+cache -- is closed at the packaging boundary where it can be pinned by one test
+rather than by remembering. Named here so the next person does not conclude the
+tree-writing is intentional.

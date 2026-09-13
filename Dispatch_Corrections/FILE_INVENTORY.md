@@ -3,6 +3,14 @@
 Generated from `git`, not written by hand. The hash is the first 12 characters
 of the file's SHA-256, so the package can be checked against a checkout.
 
+> **This is the Phase 2 inventory, and it is a snapshot of that delivery.** Line
+> counts and hashes below are from when it was generated and later work has
+> moved past several of them. For what is in the package *now*, with a full
+> SHA-256 per file and a checker that runs on a machine with nothing installed,
+> use `ROOT_MANIFEST.md` and `Dispatch_Corrections/verify_manifest.py`. Kept
+> rather than regenerated because it is the record of what Phase 2 delivered,
+> and overwriting it would erase that.
+
 ## Added — sandbox `jax1313-outlook/Joe-Assistant`
 
 **`Dispatch_Corrections/docs/`** — The merge package documents
@@ -13,8 +21,8 @@ of the file's SHA-256, so the package can be checked against a checkout.
 | `Dispatch_Corrections/docs/EXTERNAL_ACTIVATION.md` | 133 | `a2b86fc90db7` |
 | `Dispatch_Corrections/docs/IMPLEMENTATION_SUMMARY.md` | 99 | `7d290f65eb65` |
 | `Dispatch_Corrections/docs/JOE_IMPLEMENTATION.md` | 155 | `883ae710b074` |
-| `Dispatch_Corrections/docs/KNOWN_LIMITATIONS.md` | 110 | `5e6c215b08f0` |
-| `Dispatch_Corrections/docs/MERGE_PLAN.md` | 123 | `78d5a077d523` |
+| `KNOWN_LIMITATIONS.md` | 110 | `5e6c215b08f0` |
+| `MERGE_PLAN.md` | 123 | `78d5a077d523` |
 | `Dispatch_Corrections/docs/MIGRATION_PLAN.md` | 155 | `a03ffdc9f9c2` |
 | `Dispatch_Corrections/docs/ROLLBACK_PLAN.md` | 147 | `d8443f90c1cd` |
 | `Dispatch_Corrections/docs/SECURITY_FINDINGS.md` | 157 | `a121f689c470` |

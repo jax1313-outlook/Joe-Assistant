@@ -16,7 +16,7 @@ Three rules this module exists to keep, and each is enforced rather than
 described.
 
 **Read-only, structurally.** `CLAUDE.md` §5.4: "No direct Dispatch write
-authority may be granted to Assistant." `DispatchReader` exposes eight read
+authority may be granted to Assistant." `DispatchReader` exposes nine read
 methods and holds no reference to anything that writes. It is not a wrapper
 around `store` that promises to behave -- it names the functions it may call, so
 granting a write would mean editing this file, in public, on purpose.
@@ -111,7 +111,7 @@ class DispatchReader:
             raise DispatchUnavailable(str(exc)) from exc
         return store
 
-    # -- the eight the workers actually call ------------------------------
+    # -- the nine the workers actually call -------------------------------
 
     def get_load(self, load_id):
         return self._store().get_load(load_id)

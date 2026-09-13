@@ -6,6 +6,90 @@ Destination: `D:\Claude-Build`. Authority: Mike Zachary.
 
 ---
 
+## Mission review — 2026-09-13
+
+### The workers had no host, and then no caller
+
+`Workers/worker_bus/` defined Intelligence, Publisher, Joe and Library with
+bounded contracts, a mediator and an audit log. Thirty-nine tests passed. The
+bus was constructed in exactly one place — `Workers/tests/test_worker_bus.py` —
+and nothing in Dispatch or the Assistant Plugin ever built one, so not one
+worker could perform a constitutional duty against a real load.
+
+Fourth appearance of the same shape in this programme, after the capacity engine
+(1,861 lines, no caller), the proof-path commands (documented, non-existent) and
+the JSON stores' half-guarantee. **Passing tests over code nothing calls.**
+
+`host.py` assembles it. The read boundary is data rather than policy:
+`READ_METHODS` is a nine-row tuple naming every `dispatch.store` function the
+Assistant may call, and a test walks it and fails if any row resolves to a
+write. `DispatchReader` is frozen and has no write method to reach.
+
+Measured against a real Dispatch with a real load:
+
+| worker | duty | status |
+|---|---|---|
+| `INTELLIGENCE` | `assess_load` | `LIVE` |
+| `PUBLISHER` | `check_readiness` | `LIVE` |
+| `JOE` | `read_back_load` | `LIVE` — *"Next is delivery 2026-07-30 16:00 - 20:00 in Houston TX."* |
+
+`__main__.py` then closes the same gap one layer up, because a `build_bus()`
+nothing invokes is the defect again: `python -m worker_bus status` says what the
+workers can do on this machine without running one, and `ask` runs exactly one
+capability with the status word printed first.
+
+**No `--authorized-by` flag exists, deliberately.** §4.3 forbids manufacturing a
+Mike attribution "not as a default, not as a seed, not as a test fixture, not as
+an inference", and a name typed at an unauthenticated prompt is all four. The
+one capability requiring a recorded decision refuses from the command line and
+names what would satisfy it.
+
+Two defects found by writing the tests. Joe imported his conversation layer at
+call time with no guard, so a driver on a machine without it got a
+`ModuleNotFoundError`; now `UNCONFIGURED` with a sentence. And an empty Library
+shelf answered `ABSENT` with nothing else, which on a terminal is one bare word
+and no reason; the command prints the artifacts instead of inventing a sentence.
+
+Also corrected: `host.py` said "eight read methods" in two places and there are
+nine. A miscount in the one file whose purpose is that a reviewer can read a
+single tuple.
+
+**Sandbox suite 692 → 727.** 17 tests for the host, 18 for the command line, 0
+warnings. ADR-23.
+
+### The transfer package was carrying the token cache and a driver's words
+
+Found by regenerating `ROOT_MANIFEST.md` for `TEST_EVIDENCE.md`: 574 files
+became 708, and the 134 new ones were memory records written into the source
+tree by test runs. `.gitignore` describes that directory as holding "the
+DPAPI-encrypted Microsoft 365 token cache" and "memory records carrying real
+driver requests and assistant responses". Git had them right; the manifest walks
+the filesystem, and a filesystem walk does not know what "untracked" means.
+
+**`claude-build-phase3.zip` already held 129 of them.** Nothing was leaked -- it
+was never copied anywhere -- which is the only reason this is a finding rather
+than an incident, and the reason the test exists now instead of afterwards.
+
+The walk reads `.gitignore` rather than restating it, so the rule lives in one
+place and cannot drift toward shipping something; only the plain forms are
+honoured and negations are dropped, so an unsupported rule can only exclude
+more. `--archive` now builds the zip from the manifest's own list, so the
+archive and the checksums cannot describe different sets of files.
+
+Rebuilt: **452 files, 0 runtime files**, every entry matching its manifest hash.
+**Sandbox suite 727 → 738.**
+
+### `0017` — the build status block had drifted from the patches above it
+
+`Dispatch/CLAUDE.md` §8 still read *4,171 passed at 91.39%*. True when the
+coverage commit wrote it, and false four commits later: the capacity stops, the
+store locking, the rate-confirmation distance and the doctrine pin each brought
+tests and none touched the block. Measured on the checkout rather than
+incremented: **4,221 passed, 91.48% branch coverage.** A status block that
+drifts is worse than none, because a cold-start builder cannot tell that it did.
+
+---
+
 ## Phase 3 (continued) — 2026-09-13
 
 ### Governance registry: scope checked rather than asserted

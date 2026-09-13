@@ -1,0 +1,51 @@
+From 436f4023f13444395c4c8ccb57d99eb73f91bf7f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 13 Sep 2026 05:43:37 +0000
+Subject: [PATCH] Bring the build status block up to date with the patches
+ above it
+
+Section 8 still read 4,171 passed at 91.39%. That was true when the
+coverage commit wrote it and stopped being true four commits later: the
+capacity stops, the store locking, the rate-confirmation distance and the
+doctrine pin each brought their own tests and none of them touched the
+status block.
+
+Measured on this checkout rather than incremented:
+
+  4,221 passed in 641.41s
+  Required test coverage of 90.0% reached. Total coverage: 91.48%
+
+A status block that drifts is worse than no status block, because a
+cold-start builder has no way to know it drifted. It is the first table
+in the file section 7 calls the source of truth.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PohbRGCKjuPQQ9ZxJhJv83
+---
+ CLAUDE.md | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 58ec632..b341e2a 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -278,13 +278,13 @@ Do not mark an item verified without actual runtime evidence. Current readiness:
+ 
+ ---
+ 
+-## 8. Current build status (2026-09-12)
++## 8. Current build status (2026-09-13)
+ 
+ | | |
+ |---|---|
+ | Version | `0.1.0` |
+-| Suite | **4,171 passed** · 0 failed / 0 skipped / 0 warnings |
+-| Gated coverage | **91.39%** with **branch coverage** over `cin_lite` + `dispatch` + `portal` + `dispatch_launcher` (floor 90%) |
++| Suite | **4,221 passed** · 0 failed / 0 skipped / 0 warnings |
++| Gated coverage | **91.48%** with **branch coverage** over `cin_lite` + `dispatch` + `portal` + `dispatch_launcher` (floor 90%) |
+ | Ungated | nothing. `dispatch_launcher/` is inside the gate; its Windows-only branches are marked `pragma: no cover` line by line rather than the package being exempt |
+ | Laptop readiness | **UNVERIFIED** — see below |
+ 
+-- 
+2.43.0
+
