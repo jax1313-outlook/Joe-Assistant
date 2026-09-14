@@ -25,9 +25,9 @@ by shape only, so no PIN reaches a log.
 
 The rules are the Library's, and Joe passes along how he was asked (`channel`):
 an Operations PIN is authorized by Mike Zachary by voice (`VOICE`) or in the dialog
-box (`DIALOG`), and nothing else; drivers choose their own PIN in the Driver portal,
-four digits, so Joe only clears one (`pin_clear_driver`) so the driver can choose again; a
-customer's load number is their PIN.
+box (`DIALOG`), and nothing else; driver PINs are four characters entered at the
+Driver portal's PIN window and open it for whoever holds them, so Joe only retires
+one (`pin_retire`); a customer's load number is their PIN.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ class JoeWorker:
     #: persistent Library is configured. None means portal entry is not managed here.
     pins: object | None = None
 
-    PIN_CAPABILITIES = ("pin_create", "pin_add_customer_load", "pin_reset", "pin_clear_driver", "pin_enable",
+    PIN_CAPABILITIES = ("pin_create", "pin_add_customer_load", "pin_reset", "pin_retire", "pin_enable",
                         "pin_disable", "pin_validate")
 
     def capabilities(self) -> tuple[Capability, ...]:
@@ -59,8 +59,8 @@ class JoeWorker:
                        produces="the customer's record, never the load number"),
             Capability("pin_reset", "Replace an Operations user's PIN, as Mike Zachary authorizes by voice or dialog.",
                        produces="confirmation, never the PIN"),
-            Capability("pin_clear_driver", "Clear a driver's PIN so the driver chooses a new one.",
-                       produces="confirmation"),
+            Capability("pin_retire", "Stop one driver PIN or one customer load number.",
+                       produces="confirmation, never the PIN"),
             Capability("pin_enable", "Let a user into their portal again.", produces="the user's status"),
             Capability("pin_disable", "Stop a user entering their portal.", produces="the user's status"),
             Capability("pin_validate", "Check a PIN for a portal.",
@@ -139,9 +139,9 @@ class JoeWorker:
                 done = self.pins.reset_pin(p.get("role", ""), p.get("name", ""), p.get("pin", ""),
                                            requested_by=person, channel=channel)
                 detail = f"{p.get('name')}'s PIN is changed. The old one no longer works."
-            elif request.capability == "pin_clear_driver":
-                done = self.pins.clear_driver_pin(p.get("driver_ref", ""), requested_by=person, channel=channel)
-                detail = f"{done.get('display_name')}'s PIN is cleared. They choose a new one next time they sign in."
+            elif request.capability == "pin_retire":
+                done = self.pins.disable_pin(p.get("role", ""), p.get("pin", ""), requested_by=person, channel=channel)
+                detail = f"That PIN no longer opens the {p.get('role', '').title()} portal."
             else:
                 enabled = request.capability == "pin_enable"
                 done = self.pins.set_enabled(p.get("role", ""), p.get("name", ""), enabled, requested_by=person,

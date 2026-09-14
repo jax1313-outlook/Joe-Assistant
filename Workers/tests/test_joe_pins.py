@@ -45,7 +45,7 @@ def ask(bus, capability, **payload):
 def test_joe_serves_all_three_portals(bus, library):
     assert ask(bus, "pin_create", role="operations", name=MIKE, pin="7301", for_person=MIKE,
                channel="dialog").status == "LIVE"
-    library.pins.set_driver_pin("Ray Vasquez", "DRV-0007", "4418")  # the driver, in the Driver portal
+    library.pins.add_driver_pin("4418")  # entered at the Driver portal's PIN window
     assert ask(bus, "pin_add_customer_load", customer="XPO Logistics", load_number="8842193", for_person=MIKE).status == "LIVE"
 
     answers = {
@@ -70,19 +70,19 @@ def test_operations_otherwise_is_refused(bus, who, channel):
     assert response.refused and "Mike Zachary" in response.refusal.reason
 
 
-def test_joe_does_not_assign_a_driver_pin_he_clears_it(bus, library):
+def test_joe_does_not_assign_a_driver_pin_he_retires_one(bus, library):
     assert ask(bus, "pin_create", role="driver", name="Ray Vasquez", pin="4418", for_person=MIKE).refused
-    library.pins.set_driver_pin("Ray Vasquez", "DRV-0007", "4418")
-    cleared = ask(bus, "pin_clear_driver", driver_ref="DRV-0007", for_person=MIKE)
-    assert cleared.status == "LIVE" and "Ray Vasquez" in cleared.detail
+    library.pins.add_driver_pin("4418")  # entered at the Driver portal's PIN window
+    retired = ask(bus, "pin_retire", role="driver", pin="4418", for_person=MIKE)
+    assert retired.status == "LIVE" and "4418" not in retired.detail
     assert ask(bus, "pin_validate", role="driver", pin="4418").detail == "Denied"
 
 
 def test_joe_disables_and_enables(bus, library):
-    library.pins.set_driver_pin("Ray Vasquez", "DRV-0007", "4418")
-    ask(bus, "pin_disable", role="driver", name="Ray Vasquez", for_person=MIKE)
+    library.pins.add_driver_pin("4418")
+    ask(bus, "pin_disable", role="driver", name="Drivers", for_person=MIKE)
     assert ask(bus, "pin_validate", role="driver", pin="4418").detail == "Denied"
-    ask(bus, "pin_enable", role="driver", name="Ray Vasquez", for_person=MIKE)
+    ask(bus, "pin_enable", role="driver", name="Drivers", for_person=MIKE)
     assert ask(bus, "pin_validate", role="driver", pin="4418").detail == "Authenticated"
 
 
