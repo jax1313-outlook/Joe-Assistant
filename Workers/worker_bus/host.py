@@ -263,7 +263,11 @@ def build_bus(*, reader=None, reasoner=None, assets=None, audit=None) -> WorkerB
     bus = WorkerBus(audit=audit if audit is not None else AuditLog())
     bus.register(IntelligenceWorker(reader=reader))
     bus.register(PublisherWorker(reader=reader))
-    bus.register(JoeWorker(reader=reader, reasoner=reasoner))
+    # Joe manages portal entry through the Library PIN Service, which lives in the persistent
+    # Library. With only the in-memory shelf there is nowhere durable to keep a PIN, so none.
+    library = library_service()
+    pins = library.pins if library is not None and hasattr(library, "pins") else None
+    bus.register(JoeWorker(reader=reader, reasoner=reasoner, pins=pins))
     # A real Library when one is reachable; the in-memory shelf otherwise. An
     # explicit `assets` argument still wins, so a test can pin the shelf without
     # depending on whether a sibling repository happens to be checked out.

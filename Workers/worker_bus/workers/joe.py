@@ -14,6 +14,14 @@ environment any of this software will ever be used in.
 The read-back contract is the D2 rule in code: a driver who is moving, tired and
 has one hand gets the answer in one sentence, the most important thing first,
 and never a list to scan.
+
+**Portal entry (Mike Zachary's direction, 2026-09-13).** Joe performs the work of
+the Library PIN Service: creating and resetting PINs, adding customer load numbers,
+enabling and disabling users, and validating a PIN for a portal. These are Library
+records, not Dispatch writes, so the clause above is untouched. Every administrative
+action names the person Joe is acting for (`for_person`); a system identity is
+refused. A PIN is never repeated in a response, and the bus audit records payloads
+by shape only, so no PIN reaches a log.
 """
 
 from __future__ import annotations
@@ -30,9 +38,27 @@ class JoeWorker:
     #: The bounded reasoner. None means Joe can still read back facts -- which is
     #: most of what a driver asks for -- and cannot answer anything open-ended.
     reasoner: object | None = None
+    #: The Library PIN Service (`dispatch_library.catalog.PinService`), when the
+    #: persistent Library is configured. None means portal entry is not managed here.
+    pins: object | None = None
+
+    PIN_CAPABILITIES = ("pin_create", "pin_add_customer_load", "pin_reset", "pin_enable",
+                        "pin_disable", "pin_validate")
 
     def capabilities(self) -> tuple[Capability, ...]:
-        return (
+        pin_work = (
+            Capability("pin_create", "Give an Operations user or a Driver a PIN.",
+                       produces="the user's record, never the PIN"),
+            Capability("pin_add_customer_load", "Make a customer load number a Customer portal PIN.",
+                       produces="the customer's record, never the load number"),
+            Capability("pin_reset", "Replace an Operations user's or Driver's PIN.",
+                       produces="confirmation, never the PIN"),
+            Capability("pin_enable", "Let a user into their portal again.", produces="the user's status"),
+            Capability("pin_disable", "Stop a user entering their portal.", produces="the user's status"),
+            Capability("pin_validate", "Check a PIN for a portal.",
+                       produces="Authenticated with role, or Denied"),
+        )
+        return pin_work + (
             Capability(
                 "read_back_load",
                 "Say what the driver needs about the current load, in one sentence.",
@@ -59,6 +85,8 @@ class JoeWorker:
         return "LIVE" if self.reasoner is not None else "CONFIGURED"
 
     def handle(self, request: WorkerRequest, deps) -> WorkerResponse:
+        if request.capability in self.PIN_CAPABILITIES:
+            return self._pin_work(request)
         if self.reader is None:
             return WorkerResponse(
                 worker=self.worker_id, capability=request.capability,
@@ -70,6 +98,45 @@ class JoeWorker:
             "answer_question": self._answer,
             "propose_capture": self._propose,
         }[request.capability](request)
+
+    # ------------------------------------------------------------ portal entry
+
+    def _pin_work(self, request: WorkerRequest) -> WorkerResponse:
+        def answer(status, detail, artifacts=None):
+            return WorkerResponse(worker=self.worker_id, capability=request.capability, status=status,
+                                  correlation_id=request.correlation_id, detail=detail,
+                                  artifacts=artifacts or {})
+
+        if self.pins is None:
+            return answer("UNCONFIGURED", "Portal entry is not managed on this machine: the persistent "
+                                          "Library (DISPATCH_LIBRARY_CATALOG) is not configured.")
+        p = request.payload
+        if request.capability == "pin_validate":
+            result = self.pins.validate(p.get("role", ""), p.get("pin", ""), client_key=p.get("client_key"))
+            return answer("LIVE", result.answer()["result"], {"answer": result.answer()})
+
+        person = (p.get("for_person") or "").strip()
+        try:
+            if request.capability == "pin_create":
+                done = self.pins.create_pin(p.get("role", ""), p.get("name", ""), p.get("pin", ""),
+                                            requested_by=person, subject_ref=p.get("subject_ref"))
+                detail = f"{p.get('name')} can now enter the {p.get('role', '').title()} portal."
+            elif request.capability == "pin_add_customer_load":
+                done = self.pins.add_customer_load(p.get("customer", ""), p.get("load_number", ""),
+                                                   requested_by=person)
+                detail = (f"That load number already opens {p.get('customer')}'s view." if done.get("already_present")
+                          else f"That load number now opens {p.get('customer')}'s view, and only theirs.")
+            elif request.capability == "pin_reset":
+                done = self.pins.reset_pin(p.get("role", ""), p.get("name", ""), p.get("pin", ""), requested_by=person)
+                detail = f"{p.get('name')}'s PIN is changed. The old one no longer works."
+            else:
+                enabled = request.capability == "pin_enable"
+                done = self.pins.set_enabled(p.get("role", ""), p.get("name", ""), enabled, requested_by=person)
+                detail = f"{p.get('name')} is {'enabled' if enabled else 'disabled'}."
+        except (ValueError, KeyError) as exc:
+            # The Library's refusals never contain a PIN; they are safe to say back.
+            return refuse(request, self.worker_id, "pin_service_refused", str(exc).strip("'\""))
+        return answer("LIVE", detail, {"record": {k: v for k, v in done.items() if k != "pin_hash"}})
 
     # ----------------------------------------------------------------- work
 
