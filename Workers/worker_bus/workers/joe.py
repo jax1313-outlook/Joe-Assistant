@@ -22,6 +22,12 @@ records, not Dispatch writes, so the clause above is untouched. Every administra
 action names the person Joe is acting for (`for_person`); a system identity is
 refused. A PIN is never repeated in a response, and the bus audit records payloads
 by shape only, so no PIN reaches a log.
+
+The rules are the Library's, and Joe passes along how he was asked (`channel`):
+an Operations PIN is authorized by Mike Zachary by voice (`VOICE`) or in the dialog
+box (`DIALOG`), and nothing else; drivers choose their own PIN in the Driver portal,
+so Joe only clears one (`pin_clear_driver`) so the driver can choose again; a
+customer's load number is their PIN.
 """
 
 from __future__ import annotations
@@ -42,17 +48,19 @@ class JoeWorker:
     #: persistent Library is configured. None means portal entry is not managed here.
     pins: object | None = None
 
-    PIN_CAPABILITIES = ("pin_create", "pin_add_customer_load", "pin_reset", "pin_enable",
+    PIN_CAPABILITIES = ("pin_create", "pin_add_customer_load", "pin_reset", "pin_clear_driver", "pin_enable",
                         "pin_disable", "pin_validate")
 
     def capabilities(self) -> tuple[Capability, ...]:
         pin_work = (
-            Capability("pin_create", "Give an Operations user or a Driver a PIN.",
+            Capability("pin_create", "Give an Operations user a PIN, as Mike Zachary authorizes by voice or dialog.",
                        produces="the user's record, never the PIN"),
             Capability("pin_add_customer_load", "Make a customer load number a Customer portal PIN.",
                        produces="the customer's record, never the load number"),
-            Capability("pin_reset", "Replace an Operations user's or Driver's PIN.",
+            Capability("pin_reset", "Replace an Operations user's PIN, as Mike Zachary authorizes by voice or dialog.",
                        produces="confirmation, never the PIN"),
+            Capability("pin_clear_driver", "Clear a driver's PIN so the driver chooses a new one.",
+                       produces="confirmation"),
             Capability("pin_enable", "Let a user into their portal again.", produces="the user's status"),
             Capability("pin_disable", "Stop a user entering their portal.", produces="the user's status"),
             Capability("pin_validate", "Check a PIN for a portal.",
@@ -112,26 +120,33 @@ class JoeWorker:
                                           "Library (DISPATCH_LIBRARY_CATALOG) is not configured.")
         p = request.payload
         if request.capability == "pin_validate":
-            result = self.pins.validate(p.get("role", ""), p.get("pin", ""), client_key=p.get("client_key"))
+            result = self.pins.validate(p.get("role", ""), p.get("pin", ""), client_key=p.get("client_key"),
+                                        account=p.get("driver_ref"))
             return answer("LIVE", result.answer()["result"], {"answer": result.answer()})
 
         person = (p.get("for_person") or "").strip()
+        channel = (p.get("channel") or "JOE").strip().upper()
         try:
             if request.capability == "pin_create":
                 done = self.pins.create_pin(p.get("role", ""), p.get("name", ""), p.get("pin", ""),
-                                            requested_by=person, subject_ref=p.get("subject_ref"))
+                                            requested_by=person, subject_ref=p.get("subject_ref"), channel=channel)
                 detail = f"{p.get('name')} can now enter the {p.get('role', '').title()} portal."
             elif request.capability == "pin_add_customer_load":
                 done = self.pins.add_customer_load(p.get("customer", ""), p.get("load_number", ""),
-                                                   requested_by=person)
+                                                   requested_by=person, channel=channel)
                 detail = (f"That load number already opens {p.get('customer')}'s view." if done.get("already_present")
                           else f"That load number now opens {p.get('customer')}'s view, and only theirs.")
             elif request.capability == "pin_reset":
-                done = self.pins.reset_pin(p.get("role", ""), p.get("name", ""), p.get("pin", ""), requested_by=person)
+                done = self.pins.reset_pin(p.get("role", ""), p.get("name", ""), p.get("pin", ""),
+                                           requested_by=person, channel=channel)
                 detail = f"{p.get('name')}'s PIN is changed. The old one no longer works."
+            elif request.capability == "pin_clear_driver":
+                done = self.pins.clear_driver_pin(p.get("driver_ref", ""), requested_by=person, channel=channel)
+                detail = f"{done.get('display_name')}'s PIN is cleared. They choose a new one next time they sign in."
             else:
                 enabled = request.capability == "pin_enable"
-                done = self.pins.set_enabled(p.get("role", ""), p.get("name", ""), enabled, requested_by=person)
+                done = self.pins.set_enabled(p.get("role", ""), p.get("name", ""), enabled, requested_by=person,
+                                             channel=channel)
                 detail = f"{p.get('name')} is {'enabled' if enabled else 'disabled'}."
         except (ValueError, KeyError) as exc:
             # The Library's refusals never contain a PIN; they are safe to say back.
