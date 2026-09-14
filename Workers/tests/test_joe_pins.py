@@ -50,8 +50,7 @@ def test_joe_serves_all_three_portals(bus, library):
 
     answers = {
         role: ask(bus, "pin_validate", role=role, pin=pin, client_key="tablet", **extra).artifacts["answer"]
-        for role, pin, extra in (("operations", "7301", {}), ("driver", "4418", {"driver_ref": "DRV-0007"}),
-                                 ("customer", "8842193", {}))
+        for role, pin, extra in (("operations", "7301", {}), ("driver", "4418", {}), ("customer", "8842193", {}))
     }
     assert [answers[r]["role"] for r in ("operations", "driver", "customer")] == ["Operations", "Driver", "Customer"]
     assert answers["customer"]["display_name"] == "XPO Logistics"
@@ -76,15 +75,15 @@ def test_joe_does_not_assign_a_driver_pin_he_clears_it(bus, library):
     library.pins.set_driver_pin("Ray Vasquez", "DRV-0007", "4418")
     cleared = ask(bus, "pin_clear_driver", driver_ref="DRV-0007", for_person=MIKE)
     assert cleared.status == "LIVE" and "Ray Vasquez" in cleared.detail
-    assert ask(bus, "pin_validate", role="driver", pin="4418", driver_ref="DRV-0007").detail == "Denied"
+    assert ask(bus, "pin_validate", role="driver", pin="4418").detail == "Denied"
 
 
 def test_joe_disables_and_enables(bus, library):
     library.pins.set_driver_pin("Ray Vasquez", "DRV-0007", "4418")
     ask(bus, "pin_disable", role="driver", name="Ray Vasquez", for_person=MIKE)
-    assert ask(bus, "pin_validate", role="driver", pin="4418", driver_ref="DRV-0007").detail == "Denied"
+    assert ask(bus, "pin_validate", role="driver", pin="4418").detail == "Denied"
     ask(bus, "pin_enable", role="driver", name="Ray Vasquez", for_person=MIKE)
-    assert ask(bus, "pin_validate", role="driver", pin="4418", driver_ref="DRV-0007").detail == "Authenticated"
+    assert ask(bus, "pin_validate", role="driver", pin="4418").detail == "Authenticated"
 
 
 def test_joe_acts_for_a_person_not_for_himself(bus):

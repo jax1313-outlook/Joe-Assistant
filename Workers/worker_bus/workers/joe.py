@@ -26,7 +26,7 @@ by shape only, so no PIN reaches a log.
 The rules are the Library's, and Joe passes along how he was asked (`channel`):
 an Operations PIN is authorized by Mike Zachary by voice (`VOICE`) or in the dialog
 box (`DIALOG`), and nothing else; drivers choose their own PIN in the Driver portal,
-so Joe only clears one (`pin_clear_driver`) so the driver can choose again; a
+four digits, so Joe only clears one (`pin_clear_driver`) so the driver can choose again; a
 customer's load number is their PIN.
 """
 
@@ -120,8 +120,7 @@ class JoeWorker:
                                           "Library (DISPATCH_LIBRARY_CATALOG) is not configured.")
         p = request.payload
         if request.capability == "pin_validate":
-            result = self.pins.validate(p.get("role", ""), p.get("pin", ""), client_key=p.get("client_key"),
-                                        account=p.get("driver_ref"))
+            result = self.pins.validate(p.get("role", ""), p.get("pin", ""), client_key=p.get("client_key"))
             return answer("LIVE", result.answer()["result"], {"answer": result.answer()})
 
         person = (p.get("for_person") or "").strip()
