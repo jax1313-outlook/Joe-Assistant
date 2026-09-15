@@ -1,0 +1,472 @@
+From 5e5f34d0f654eff1dc4aae11de4a63b13da256c5 Mon Sep 17 00:00:00 2001
+From: Dispatch Sandbox <jax1313@outlook.com>
+Date: Sat, 12 Sep 2026 19:00:18 +0000
+Subject: [PATCH 03/12] Replace the dashboard's per-load queries with two
+ rollups
+
+get_financial_dashboard() and get_chart_data() each walked every load and asked
+the database twice about it -- get_rate_confirmation(load_id) and
+list_expenses(load_id). Every one opened its own connection, and SQLite reads
+the whole schema into memory before the first statement on a new connection, so
+the cost was roughly 1.3 ms per load on a page that loads every load there has
+ever been.
+
+Measured through the real portal client, before:
+
+    50 loads    261 ms        500 loads  2,005 ms      2,000 loads  7,786 ms
+
+After:
+
+    50 loads     10 ms        500 loads     18 ms      2,000 loads     47 ms
+                                                       5,000 loads    102 ms
+
+The arithmetic is unchanged. Per-load revenue and per-load expenses are still
+rounded to cents before they are accumulated -- summing raw floats and rounding
+once made this report and store.get_load_profitability_data() disagree by
+pennies on identical data, and that convention is the fix for it. So the rollup
+returns one row per load and leaves the rounding in the service layer rather
+than pushing SUM() into SQL and quietly changing the totals. The rate-confirmation
+join picks MIN(rowid) per load, reproducing what fetchone() returned, including
+for a load that somehow carries two.
+
+tests/test_dashboard_scaling.py asserts connection *counts*, not milliseconds: a
+wall-clock assertion on a shared runner tests the runner. The invariant is that
+the count does not grow with the size of the loads table.
+---
+ dispatch/services.py            |  77 ++++++-------
+ dispatch/store.py               |  96 ++++++++++++++++
+ tests/test_dashboard_scaling.py | 196 ++++++++++++++++++++++++++++++++
+ 3 files changed, 327 insertions(+), 42 deletions(-)
+ create mode 100644 tests/test_dashboard_scaling.py
+
+diff --git a/dispatch/services.py b/dispatch/services.py
+index 35790d8..ffef2ae 100644
+--- a/dispatch/services.py
++++ b/dispatch/services.py
+@@ -1237,47 +1237,38 @@ def list_settlements(
+ 
+ 
+ def get_financial_dashboard() -> dict:
+-    all_loads = store.list_loads()
+-    settlements = store.list_settlements()
++    """Money across every load, in two queries rather than two per load.
++
++    This used to walk `store.list_loads()` and ask the database twice about each
++    one. On a 2,000-load database that was 4,000 connections and 5.0 s, and it
++    grew linearly, so /home got slower every month the business ran. The
++    arithmetic below is unchanged: per-load revenue and per-load expenses are
++    still rounded to cents *before* they are accumulated, because summing raw
++    floats and rounding once made this report and
++    `store.get_load_profitability_data()` disagree by pennies on identical data.
++    Round-then-sum is the one convention; only where the rows come from changed.
++    """
++    rows = store.get_load_financial_rows()
++    settlement_totals = store.get_settlement_rollup()
+ 
+     total_revenue = 0.0
+     total_expenses = 0.0
+-    total_paid = 0.0
+-    total_outstanding = 0.0
+     loads_with_rate = 0
+ 
+-    for load in all_loads:
+-        rate = store.get_rate_confirmation(load["load_id"])
+-        if rate:
+-            # Round per-load before accumulating, matching
+-            # store.get_load_profitability_data()'s convention -- summing raw
+-            # unrounded floats here and store.get_load_profitability_data()
+-            # rounding per-row before its own sum previously gave two
+-            # financial reports different totals for the same underlying
+-            # data (a real, demonstrable penny-level discrepancy, not
+-            # hypothetical). Round-then-sum everywhere revenue/expenses are
+-            # aggregated is the one convention to keep.
+-            total_revenue += round(rate["revenue"], 2)
++    for row in rows:
++        if row["has_rate"]:
++            total_revenue += round(row["revenue"], 2)
+             loads_with_rate += 1
++        total_expenses += round(row["expense_total"], 2)
+ 
+-        expenses = store.list_expenses(load["load_id"])
+-        total_expenses += round(sum(e["amount"] for e in expenses), 2)
+-
+-    for stl in settlements:
+-        if stl["payment_status"] == "paid":
+-            total_paid += stl["net_payment"]
+-        elif stl["payment_status"] in ("invoiced", "overdue"):
+-            total_outstanding += stl["invoice_amount"]
++    total_paid = settlement_totals["total_paid"]
++    total_outstanding = settlement_totals["total_outstanding"]
+ 
+     total_profit = total_revenue - total_expenses
+     margin_pct = (total_profit / total_revenue * 100) if total_revenue > 0 else 0.0
+ 
+-    invoiced_count = sum(1 for s in settlements if s["payment_status"] == "invoiced")
+-    paid_count = sum(1 for s in settlements if s["payment_status"] == "paid")
+-    overdue_count = sum(1 for s in settlements if s["payment_status"] == "overdue")
+-
+     return {
+-        "total_loads": len(all_loads),
++        "total_loads": len(rows),
+         "loads_with_rate": loads_with_rate,
+         "total_revenue": round(total_revenue, 2),
+         "total_expenses": round(total_expenses, 2),
+@@ -1285,31 +1276,33 @@ def get_financial_dashboard() -> dict:
+         "margin_pct": round(margin_pct, 1),
+         "total_paid": round(total_paid, 2),
+         "total_outstanding": round(total_outstanding, 2),
+-        "invoiced_count": invoiced_count,
+-        "paid_count": paid_count,
+-        "overdue_count": overdue_count,
++        "invoiced_count": settlement_totals["invoiced_count"],
++        "paid_count": settlement_totals["paid_count"],
++        "overdue_count": settlement_totals["overdue_count"],
+     }
+ 
+ 
+ def get_chart_data() -> dict:
+-    """Aggregate data for dashboard charts: loads by status, revenue by month."""
++    """Aggregate data for dashboard charts: loads by status, revenue by month.
++
++    Same rows as `get_financial_dashboard`, same single query. This one used to
++    run its own per-load `get_rate_confirmation()` walk, which is why the charts
++    cost a further 2.5 s on a 2,000-load database on top of the dashboard's 5.0.
++    """
+     from collections import defaultdict
+ 
+-    all_loads = store.list_loads()
++    rows = store.get_load_financial_rows()
+ 
+     status_counts: dict[str, int] = defaultdict(int)
+-    for load in all_loads:
+-        status_counts[load["status"]] += 1
+-
+     monthly_revenue: dict[str, float] = defaultdict(float)
+     monthly_loads: dict[str, int] = defaultdict(int)
+-    for load in all_loads:
+-        rate = store.get_rate_confirmation(load["load_id"])
+-        created = load.get("created_at", "")
++    for row in rows:
++        status_counts[row["status"]] += 1
++        created = row.get("created_at", "") or ""
+         month_key = created[:7] if len(created) >= 7 else "unknown"
+         monthly_loads[month_key] += 1
+-        if rate:
+-            monthly_revenue[month_key] += rate["revenue"]
++        if row["has_rate"]:
++            monthly_revenue[month_key] += row["revenue"]
+ 
+     months_sorted = sorted(set(monthly_revenue.keys()) | set(monthly_loads.keys()))
+ 
+diff --git a/dispatch/store.py b/dispatch/store.py
+index ba5616a..c8775b9 100644
+--- a/dispatch/store.py
++++ b/dispatch/store.py
+@@ -66,6 +66,102 @@ def _paginate(
+     }
+ 
+ 
++# ── Financial rollups ─────────────────────────────────────────────────
++#
++# One query per dashboard instead of two per load.
++#
++# `get_financial_dashboard()` and `get_chart_data()` each walked every load and
++# asked the database twice about it -- `get_rate_confirmation(load_id)` and
++# `list_expenses(load_id)`. Every one of those opened its own connection, and a
++# fresh SQLite connection re-reads the whole schema before its first statement.
++# Measured on this schema that is ~0.65 ms a connection, so a 2,000-load
++# database spent ~5.0 s on the financial dashboard and ~2.5 s on the charts:
++# /home took 7.8 s, and it grew linearly, on a page nobody had ever opened with
++# two years of freight behind it.
++#
++# The rounding convention is preserved exactly. `services.get_financial_dashboard`
++# rounds each load's revenue and each load's expense total to cents *before*
++# accumulating, because summing raw floats and rounding once gave two reports
++# different answers for the same data (DECISION_LOG, and the comment still
++# standing at services.py). These functions therefore return per-load rows and
++# leave the rounding where it was, rather than pushing SUM() into SQL and
++# quietly changing the totals.
++
++
++def _one_rate_confirmation_per_load() -> str:
++    """The single rate confirmation `get_rate_confirmation()` would return.
++
++    That function does `SELECT * ... WHERE load_id=?` and takes `fetchone()`,
++    which is the lowest rowid. A plain LEFT JOIN would instead multiply the load
++    row once per confirmation, and a load that somehow carries two would have
++    its revenue counted twice. Picking MIN(rowid) reproduces the existing answer
++    exactly, including in that broken case.
++    """
++    return """
++        SELECT load_id, rate_amount, rate_type, distance_miles
++          FROM rate_confirmations
++         WHERE rowid IN (SELECT MIN(rowid) FROM rate_confirmations GROUP BY load_id)
++    """
++
++
++def get_load_financial_rows(*, include_rehearsal: bool = True) -> list[dict]:
++    """One row per load: status, created_at, revenue, expense total, has_rate.
++
++    `revenue` mirrors `RateConfirmation.revenue` -- rate x miles for a per-mile
++    confirmation that carries miles, the flat amount otherwise -- so the dashboard
++    computes the same number it always did without instantiating 2,000 dataclasses
++    to find out.
++    """
++    where = ""
++    if not include_rehearsal:
++        where = f"WHERE l.{rehearsal.operational_only()}"
++    sql = f"""
++        SELECT l.load_id            AS load_id,
++               l.status             AS status,
++               l.created_at         AS created_at,
++               rc.load_id IS NOT NULL AS has_rate,
++               CASE
++                   WHEN rc.rate_type = 'per_mile' AND COALESCE(rc.distance_miles, 0) != 0
++                       THEN rc.rate_amount * rc.distance_miles
++                   ELSE COALESCE(rc.rate_amount, 0)
++               END                  AS revenue,
++               COALESCE(ex.total, 0) AS expense_total
++          FROM loads l
++          LEFT JOIN ({_one_rate_confirmation_per_load()}) rc ON rc.load_id = l.load_id
++          LEFT JOIN (
++                SELECT load_id, SUM(amount) AS total FROM expenses GROUP BY load_id
++          ) ex ON ex.load_id = l.load_id
++        {where}
++    """
++    with get_connection() as conn:
++        rows = conn.execute(sql).fetchall()
++    return [dict_from_row(r) for r in rows]
++
++
++def get_settlement_rollup() -> dict:
++    """Settlement money and counts in one pass.
++
++    `net_payment` is `payment_amount - factoring_fee`, the same derivation
++    `Settlement.net_payment` performs, kept in SQL here so the dashboard does not
++    build a dataclass per settlement to read one property off it.
++    """
++    sql = """
++        SELECT
++            COALESCE(SUM(CASE WHEN payment_status = 'paid'
++                              THEN payment_amount - factoring_fee ELSE 0 END), 0) AS total_paid,
++            COALESCE(SUM(CASE WHEN payment_status IN ('invoiced', 'overdue')
++                              THEN invoice_amount ELSE 0 END), 0)                 AS total_outstanding,
++            COALESCE(SUM(CASE WHEN payment_status = 'invoiced' THEN 1 ELSE 0 END), 0) AS invoiced_count,
++            COALESCE(SUM(CASE WHEN payment_status = 'paid'     THEN 1 ELSE 0 END), 0) AS paid_count,
++            COALESCE(SUM(CASE WHEN payment_status = 'overdue'  THEN 1 ELSE 0 END), 0) AS overdue_count
++          FROM settlements
++    """
++    with get_connection() as conn:
++        row = conn.execute(sql).fetchone()
++    return dict_from_row(row)
++
++
++
+ # ── Load ──────────────────────────────────────────────────────────────
+ 
+ def create_load(load: Load) -> dict:
+diff --git a/tests/test_dashboard_scaling.py b/tests/test_dashboard_scaling.py
+new file mode 100644
+index 0000000..f0184cb
+--- /dev/null
++++ b/tests/test_dashboard_scaling.py
+@@ -0,0 +1,196 @@
++"""The dashboards cost the same at 10 loads as at 200.
++
++The defect this pins was not slow SQL. It was shape: `get_financial_dashboard()`
++and `get_chart_data()` each walked every load and asked the database twice about
++it, and every one of those asks opened a connection of its own. SQLite reads the
++whole schema into memory before the first statement on a new connection, which
++on this schema is ~0.65 ms, so the cost was ~1.3 ms per load and nothing about it
++looked wrong in a test — every fixture holds three loads.
++
++Measured before the fix, on a real portal client: /home took 261 ms at 50 loads,
++2,005 ms at 500 and 7,786 ms at 2,000. After: 10 ms, 18 ms, 47 ms.
++
++These tests count **connections**, not milliseconds. A wall-clock assertion on a
++shared CI runner is a flake generator, and it also tests the runner rather than
++the code. The invariant that actually matters is that the count does not grow
++with the number of loads, and that is exact, reproducible and machine-independent.
++"""
++
++from __future__ import annotations
++
++import sqlite3
++
++import pytest
++
++from dispatch import db as dispatch_db
++from dispatch import services
++from dispatch.db import set_db_path
++
++
++@pytest.fixture
++def database(tmp_path):
++    set_db_path(tmp_path / "dispatch.db")
++    try:
++        yield
++    finally:
++        set_db_path(None)
++
++
++class ConnectionCounter:
++    """Counts real SQLite connections opened while it is installed."""
++
++    def __init__(self, monkeypatch):
++        self.count = 0
++        real = sqlite3.connect
++
++        def counting(*args, **kwargs):
++            self.count += 1
++            return real(*args, **kwargs)
++
++        monkeypatch.setattr(dispatch_db.sqlite3, "connect", counting)
++
++    def reset(self):
++        self.count = 0
++
++
++def _make_loads(n: int, *, with_money: bool = True) -> None:
++    for i in range(n):
++        load = services.create_load(customer=f"Customer {i % 7}", broker_shipper="TQL")
++        if with_money:
++            services.confirm_rate(
++                load["load_id"], rate_amount=1500.0 + i, confirmed_by="Mike"
++            )
++            services.add_expense(load["load_id"], category="fuel", amount=210.55)
++
++
++@pytest.mark.parametrize(
++    "report",
++    ["get_financial_dashboard", "get_chart_data"],
++)
++def test_the_report_opens_the_same_number_of_connections_at_any_size(
++    database, monkeypatch, report
++):
++    fn = getattr(services, report)
++
++    _make_loads(5)
++    counter = ConnectionCounter(monkeypatch)
++    fn()
++    small = counter.count
++
++    _make_loads(60)  # 13x the data
++    counter.reset()
++    fn()
++    large = counter.count
++
++    assert small == large, (
++        f"{report} opened {small} connections for 5 loads and {large} for 65. "
++        "That is the per-load query shape coming back: it is what made /home take "
++        "7.8 seconds on a 2,000-load database."
++    )
++    assert large <= 4, f"{report} opens {large} connections; it should need one or two"
++
++
++def test_the_home_page_connection_count_does_not_grow_with_the_load_table(
++    database, monkeypatch, tmp_path
++):
++    """The whole page, not just one report on it."""
++    monkeypatch.setenv("PORTAL_SECRET_KEY", "scaling-test-secret")
++    monkeypatch.setenv("DISPATCH_EMAIL_SECRET", "scaling-test-email")
++    from portal.app import create_app
++
++    app = create_app({"TESTING": True})
++    app.config["LOGIN_DISABLED"] = True
++    client = app.test_client()
++
++    _make_loads(5)
++    client.get("/home")  # warm any first-call work that is not per-load
++    counter = ConnectionCounter(monkeypatch)
++    assert client.get("/home").status_code == 200
++    small = counter.count
++
++    _make_loads(60)
++    counter.reset()
++    assert client.get("/home").status_code == 200
++    large = counter.count
++
++    assert large <= small + 1, (
++        f"/home opened {small} connections with 5 loads and {large} with 65. "
++        "A page whose cost tracks the size of the loads table gets slower every "
++        "month the business runs."
++    )
++
++
++def test_schema_is_built_once_per_process_not_once_per_connection(database, monkeypatch):
++    """The other half of the same defect.
++
++    `get_connection()` ran `executescript(_SCHEMA)`, every guarded migration and
++    three sub-schema initialisers on **every** connection -- 1.22 ms against
++    0.006 ms for the query the caller wanted.
++    """
++    with dispatch_db.get_connection():
++        pass  # first connection builds and stamps
++
++    calls = {"n": 0}
++    real_init = dispatch_db._init_db
++
++    def counting_init(conn):
++        calls["n"] += 1
++        return real_init(conn)
++
++    monkeypatch.setattr(dispatch_db, "_init_db", counting_init)
++    for _ in range(25):
++        with dispatch_db.get_connection() as conn:
++            conn.execute("SELECT COUNT(*) FROM loads").fetchone()
++
++    assert calls["n"] == 0, (
++        f"_init_db ran {calls['n']} times across 25 connections to an already-built database"
++    )
++
++
++def test_a_fresh_database_is_still_built(tmp_path):
++    """The cache must never mean 'never build'."""
++    set_db_path(tmp_path / "brand-new.db")
++    try:
++        with dispatch_db.get_connection() as conn:
++            assert conn.execute("SELECT COUNT(*) FROM loads").fetchone()[0] == 0
++            row = conn.execute("SELECT revision FROM schema_state WHERE id=1").fetchone()
++            assert row["revision"] == dispatch_db.SCHEMA_REVISION
++    finally:
++        set_db_path(None)
++
++
++def test_pointing_at_a_second_database_builds_that_one_too(tmp_path):
++    """set_db_path clears the cache; otherwise the second file has no tables."""
++    set_db_path(tmp_path / "one.db")
++    with dispatch_db.get_connection() as conn:
++        conn.execute("SELECT 1 FROM loads LIMIT 1")
++    set_db_path(tmp_path / "two.db")
++    try:
++        with dispatch_db.get_connection() as conn:
++            conn.execute("SELECT 1 FROM loads LIMIT 1")  # would raise if unbuilt
++    finally:
++        set_db_path(None)
++
++
++def test_a_database_built_by_another_process_is_detected_without_rebuilding(tmp_path, monkeypatch):
++    """The in-process set cannot know about a file another process created."""
++    path = tmp_path / "shared.db"
++    set_db_path(path)
++    with dispatch_db.get_connection():
++        pass
++    dispatch_db._SCHEMA_READY.clear()  # simulate a second process starting up
++
++    calls = {"n": 0}
++    real_init = dispatch_db._init_db
++
++    def counting_init(conn):
++        calls["n"] += 1
++        return real_init(conn)
++
++    monkeypatch.setattr(dispatch_db, "_init_db", counting_init)
++    try:
++        with dispatch_db.get_connection() as conn:
++            conn.execute("SELECT COUNT(*) FROM loads").fetchone()
++        assert calls["n"] == 0, "re-ran the full schema build against an already-built file"
++    finally:
++        set_db_path(None)
+-- 
+2.43.0
+

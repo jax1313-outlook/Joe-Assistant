@@ -1,0 +1,133 @@
+From fdeac1d29d9abaa63a48c0c0b1d31d791f9a4228 Mon Sep 17 00:00:00 2001
+From: Dispatch Sandbox <jax1313@outlook.com>
+Date: Sat, 12 Sep 2026 20:35:14 +0000
+Subject: [PATCH 11/12] Measure branch coverage, and measure the launcher
+
+The gate was line-only. A line counts as covered the moment it runs once, so
+every `if` whose false path was never taken read as fully covered -- and in this
+repository the false paths are where the refusals live: the transition that is
+not allowed, the token that expired, the truck with no capacity profile, the
+transport that is UNCONFIGURED. A gate that cannot see an untested refusal is
+not measuring the thing this program is most careful about.
+
+And the packages differed between the two places they were named. .coveragerc
+listed cin_lite and dispatch; the workflow added portal on the command line;
+neither included dispatch_launcher -- 3,943 lines, and the thing that actually
+starts the product on Mike's machine. So CI enforced one gate and a contributor
+running `pytest --cov` locally got another. The workflow now passes a bare
+--cov and .coveragerc is the single definition.
+
+    branch coverage, four packages:  91.39%   (floor 90%)
+
+The number is lower than the 94.74% it replaces because it is measuring more,
+in a stricter way, across more code. Windows-only branches in the launcher stay
+excluded by individual `pragma: no cover` marks, so what is not measured is
+visible line by line instead of by a package being absent from a list.
+---
+ .coveragerc              | 28 +++++++++++++++++++++++++++-
+ .github/workflows/ci.yml | 10 +++++++---
+ CLAUDE.md                | 13 +++++++++----
+ 3 files changed, 43 insertions(+), 8 deletions(-)
+
+diff --git a/.coveragerc b/.coveragerc
+index c81a62c..03179c8 100644
+--- a/.coveragerc
++++ b/.coveragerc
+@@ -1,13 +1,39 @@
+ [run]
++# Branch coverage, not just line coverage.
++#
++# The gate was line-only (`branch = False`), which counts a line as covered the
++# moment it runs once. Every `if` in this repository whose false path was never
++# taken read as fully covered -- and the false paths are where the refusals
++# live: the transition that is not allowed, the token that has expired, the
++# truck with no capacity profile, the transport that is UNCONFIGURED. A gate
++# that cannot see an untested refusal is not measuring the thing this program
++# is most careful about.
++branch = True
++
+ source =
+     cin_lite
+     dispatch
+-branch = False
++    portal
++    # dispatch_launcher was outside the gate entirely -- 3,943 lines, and the
++    # thing that actually starts the product on Mike's machine. It is in now.
++    # Its Windows-only branches are marked `pragma: no cover` individually
++    # rather than the whole package being exempt, so what is excluded is
++    # visible line by line instead of by omission.
++    dispatch_launcher
++
++omit =
++    */__pycache__/*
++    */tests/*
+ 
+ [report]
+ show_missing = True
++skip_covered = False
+ fail_under = 90
+ exclude_lines =
+     pragma: no cover
+     if __name__ == .__main__.:
+     raise NotImplementedError
++    if TYPE_CHECKING:
++    class .*\bProtocol\):
++    @(abc\.)?abstractmethod
++    \.\.\.$
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 396ed1f..9d81266 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -38,12 +38,16 @@ jobs:
+           pip install -r portal/requirements.txt
+           pip install pytest pytest-cov
+ 
++      # The packages and the branch setting come from .coveragerc alone.
++      # Naming them here as well meant the gate CI enforced and the gate a
++      # contributor got from `pytest --cov` locally were two different gates:
++      # .coveragerc listed cin_lite and dispatch, this file added portal, and
++      # neither included dispatch_launcher -- 3,943 lines, and the thing that
++      # actually starts the product.
+       - name: Run test suite with coverage
+         run: |
+           python -m pytest \
+-            --cov=cin_lite \
+-            --cov=dispatch \
+-            --cov=portal \
++            --cov \
+             --cov-config=.coveragerc \
+             --cov-report=term-missing \
+             --cov-report=xml \
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 869f08a..58ec632 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -278,16 +278,21 @@ Do not mark an item verified without actual runtime evidence. Current readiness:
+ 
+ ---
+ 
+-## 8. Current build status (2026-08-25)
++## 8. Current build status (2026-09-12)
+ 
+ | | |
+ |---|---|
+ | Version | `0.1.0` |
+-| Suite | **3,696 passed** · 0 failed / 0 skipped / 0 warnings |
+-| Gated coverage | **94.74%** over `cin_lite` + `dispatch` + `portal` (floor 90%) |
+-| Ungated | `dispatch_launcher/` at 87.75% — Windows-only branches; see `docs/readiness/OPERATIONAL_PROOF.md` §2.1 |
++| Suite | **4,171 passed** · 0 failed / 0 skipped / 0 warnings |
++| Gated coverage | **91.39%** with **branch coverage** over `cin_lite` + `dispatch` + `portal` + `dispatch_launcher` (floor 90%) |
++| Ungated | nothing. `dispatch_launcher/` is inside the gate; its Windows-only branches are marked `pragma: no cover` line by line rather than the package being exempt |
+ | Laptop readiness | **UNVERIFIED** — see below |
+ 
++The coverage figure went *down* and the gate got stronger. It was line-only, so
++every `if` whose false path was never taken read as covered — and the false
++paths are where the refusals live. Branch coverage counts them, and
++`dispatch_launcher/` is no longer outside the measurement.
++
+ **IMPLEMENTED:** the Spine lifecycle engine; loads, drivers, equipment, capacity,
+ milestones, evidence and POD; the Driver Portal; IFTA through finalization, exception
+ detection and receipt vision pre-fill; backup and restore; CSRF across mutating routes; the
+-- 
+2.43.0
+

@@ -249,7 +249,16 @@ def run_one_phrase(service, number: int, phrase: str, mic: str):
     }
 
 
-def write_report(attempts: list, blocked: str, mic: str = "") -> None:
+def write_report(attempts: list, blocked: str, mic: str = "", destination=None) -> "Path":
+    """Write the run's evidence, and return where it went.
+
+    `destination` is injectable, and that is not a convenience. Two tests in
+    tests/test_joe.py call this function to check the shape of a blocked report,
+    and with a fixed path they **overwrote the committed proof record** -- so
+    running the suite destroyed the evidence of a real run and left the working
+    tree dirty. A proof artifact that the test suite rewrites is not a proof
+    artifact.
+    """
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     lines = [
         "# JOE - Voice Input Proof",
@@ -315,9 +324,10 @@ def write_report(attempts: list, blocked: str, mic: str = "") -> None:
                 "machine, with this microphone. It is not proven for road noise, "
                 "another speaker, or another device.", "",
             ]
-    (PLUGIN_ROOT / "proof" / "VOICE_INPUT_PROOF.md").write_text(
-        "\n".join(lines), encoding="utf-8"
-    )
+    target = Path(destination) if destination else PLUGIN_ROOT / "proof" / "VOICE_INPUT_PROOF.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines), encoding="utf-8")
+    return target
 
 
 if __name__ == "__main__":

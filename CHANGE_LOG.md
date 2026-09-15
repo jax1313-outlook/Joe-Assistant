@@ -1,0 +1,283 @@
+# CHANGE LOG — Claude build
+
+Newest first. Every entry names what was measured, not only what was written.
+
+Destination: `D:\Claude-Build`. Authority: Mike Zachary.
+
+---
+
+## Mission review — 2026-09-13
+
+### The workers had no host, and then no caller
+
+`Workers/worker_bus/` defined Intelligence, Publisher, Joe and Library with
+bounded contracts, a mediator and an audit log. Thirty-nine tests passed. The
+bus was constructed in exactly one place — `Workers/tests/test_worker_bus.py` —
+and nothing in Dispatch or the Assistant Plugin ever built one, so not one
+worker could perform a constitutional duty against a real load.
+
+Fourth appearance of the same shape in this programme, after the capacity engine
+(1,861 lines, no caller), the proof-path commands (documented, non-existent) and
+the JSON stores' half-guarantee. **Passing tests over code nothing calls.**
+
+`host.py` assembles it. The read boundary is data rather than policy:
+`READ_METHODS` is a nine-row tuple naming every `dispatch.store` function the
+Assistant may call, and a test walks it and fails if any row resolves to a
+write. `DispatchReader` is frozen and has no write method to reach.
+
+Measured against a real Dispatch with a real load:
+
+| worker | duty | status |
+|---|---|---|
+| `INTELLIGENCE` | `assess_load` | `LIVE` |
+| `PUBLISHER` | `check_readiness` | `LIVE` |
+| `JOE` | `read_back_load` | `LIVE` — *"Next is delivery 2026-07-30 16:00 - 20:00 in Houston TX."* |
+
+`__main__.py` then closes the same gap one layer up, because a `build_bus()`
+nothing invokes is the defect again: `python -m worker_bus status` says what the
+workers can do on this machine without running one, and `ask` runs exactly one
+capability with the status word printed first.
+
+**No `--authorized-by` flag exists, deliberately.** §4.3 forbids manufacturing a
+Mike attribution "not as a default, not as a seed, not as a test fixture, not as
+an inference", and a name typed at an unauthenticated prompt is all four. The
+one capability requiring a recorded decision refuses from the command line and
+names what would satisfy it.
+
+Two defects found by writing the tests. Joe imported his conversation layer at
+call time with no guard, so a driver on a machine without it got a
+`ModuleNotFoundError`; now `UNCONFIGURED` with a sentence. And an empty Library
+shelf answered `ABSENT` with nothing else, which on a terminal is one bare word
+and no reason; the command prints the artifacts instead of inventing a sentence.
+
+Also corrected: `host.py` said "eight read methods" in two places and there are
+nine. A miscount in the one file whose purpose is that a reviewer can read a
+single tuple.
+
+**Sandbox suite 692 → 727.** 17 tests for the host, 18 for the command line, 0
+warnings. ADR-23.
+
+### The transfer package was carrying the token cache and a driver's words
+
+Found by regenerating `ROOT_MANIFEST.md` for `TEST_EVIDENCE.md`: 574 files
+became 708, and the 134 new ones were memory records written into the source
+tree by test runs. `.gitignore` describes that directory as holding "the
+DPAPI-encrypted Microsoft 365 token cache" and "memory records carrying real
+driver requests and assistant responses". Git had them right; the manifest walks
+the filesystem, and a filesystem walk does not know what "untracked" means.
+
+**`claude-build-phase3.zip` already held 129 of them.** Nothing was leaked -- it
+was never copied anywhere -- which is the only reason this is a finding rather
+than an incident, and the reason the test exists now instead of afterwards.
+
+The walk reads `.gitignore` rather than restating it, so the rule lives in one
+place and cannot drift toward shipping something; only the plain forms are
+honoured and negations are dropped, so an unsupported rule can only exclude
+more. `--archive` now builds the zip from the manifest's own list, so the
+archive and the checksums cannot describe different sets of files.
+
+Rebuilt: **452 files, 0 runtime files**, every entry matching its manifest hash.
+**Sandbox suite 727 → 738.**
+
+### `0017` — the build status block had drifted from the patches above it
+
+`Dispatch/CLAUDE.md` §8 still read *4,171 passed at 91.39%*. True when the
+coverage commit wrote it, and false four commits later: the capacity stops, the
+store locking, the rate-confirmation distance and the doctrine pin each brought
+tests and none touched the block. Measured on the checkout rather than
+incremented: **4,221 passed, 91.48% branch coverage.** A status block that
+drifts is worse than none, because a cold-start builder cannot tell that it did.
+
+---
+
+## Phase 3 (continued) — 2026-09-13
+
+### Governance registry: scope checked rather than asserted
+
+`KNOWN_LIMITATIONS` §7 said the unregistered documents were "context, matrices
+and reports". Unchecked, and unchecked in the direction that costs most.
+
+Built `Governance/tools/screen_authority.py` to rank documents by binding
+language, and it **failed as a classifier** — which is the finding worth
+keeping:
+
+| document | score | actually |
+|---|---|---|
+| a registered CURRENT document | 0 | governs |
+| `Dispatch/CLAUDE.md` | 38 | the programme authority |
+| `Claude/DISPATCH_PROGRAM_MAP.md` | 65 | "NOT an approved controlling document" |
+
+Authority is structural, not lexical. So the tool ranks and a person reads.
+Reading what it surfaced found real gaps. A second pass then replaced the
+word-count screen with the structural one — what a document says about itself in
+its own status line — which took a useless queue of 171 down to **22 that
+declare themselves binding and are not registered**.
+
+**23 → 44 registered.** Nine were production Dispatch doctrine, two issued by
+Mike personally on 30 August 2026, and one —
+`DISPATCH_SYSTEM_INDEPENDENCE_DOCTRINE` — was a standing criterion of this whole
+mission that had never been in the registry.
+
+One of them, `DISPATCH_CAPACITY_PLAN_DOCTRINE`, governs the capacity work built
+earlier in this same phase, written before the doctrine had been read. The code
+complied. `0016` measures it rather than assuming it: three assessments, and the
+row-count fingerprint of every table is unchanged.
+
+The largest was in this repository — the **Assistant Plugin Constitution**,
+"Doctrine. Binding on all Assistant work" by its own statement, whose Article II
+the decision log cites, unregistered the whole time. Also CF-04's adjudicated
+lifecycle ruling, cited by `CLAUDE.md` §5.1.
+
+Two deliberate refusals: the CF-01–CF-10 conflict register is **not** flattened
+to SUPERSEDED (nine of its ten conflicts are live), and
+`AMENDMENT_1_TRANSMISSION_PROPOSED.md` is registered CURRENT because its status
+line reads "IN FORCE" while its filename says PROPOSED.
+
+Also corrected: the "87 documents" figure. The real corpus is **425** Markdown
+files across the clones.
+
+### `0015` — the distance was one join away
+
+Amends `0013`. `transit_hours()` read `distance_miles` off the load, found it absent, and
+honestly reported that arrival times could not be projected. Accurate, and one
+join short: `RateConfirmation` carries it. So the forward walk was off for every
+load *including the ones with the data*. It now falls back to the rate
+confirmation — the better source anyway, being miles somebody committed to
+rather than an estimate.
+
+### Evidence over 4 MB uploads instead of being refused *(sandbox: `Assistant_Plugin/m365`)*
+
+Files over 4 MB were refused by name. A driver photographing a bill of lading
+produces 3–8 MB routinely, so the refusal declined the ordinary case.
+
+Graph upload sessions, 5 MiB chunks, resuming from `nextExpectedRanges`. Two
+false-success defects found by writing the tests: reporting `LIVE` when Graph
+never returned the finished item, and when it returned a `200` with no `id`.
+Both now `UNVERIFIED` with the session cancelled.
+
+**Dispatch suite 4,217 → 4,221. Sandbox suite 681 → 692.**
+
+Patches `0013`–`0016` were applied to a clean checkout of the Phase 2 base with
+`git am` and their tests run there: 49 passed. The patch files are what they
+claim to be.
+
+---
+
+## Phase 3 — 2026-09-13
+
+Closed the two items Phase 2 recorded as unfinished. Both were fixed and
+measured before and after; neither number is an estimate.
+
+### `0014` — Stop the JSON stores losing a concurrent update
+
+Closes `KNOWN_LIMITATIONS` §5, which Phase 2 stated rather than fixed.
+
+`atomic_write_json` guaranteed no reader sees half a file. It could not stop two
+writers overwriting each other: both read, both mutate their own copy, and the
+second `os.replace` wins.
+
+| | |
+|---|---|
+| Before | 12 processes queued one action each; the store held **2** |
+| After | **12 of 12**, repeatably over four runs |
+| Scope | all **41** mutating functions across all **11** stores |
+
+`store_lock()` + a `guarded()` decorator holding the lock across the whole
+read-modify-write. The decorator was chosen over restructuring: every mutator
+already reads, edits and saves, so one line above each fixes the race without
+touching 138 call sites. Mirrors the `@atomic` decorator the service layer
+already uses, so there is one idiom for this rather than two.
+
+Lock file sits *beside* the store — `os.replace` swaps the file on every write,
+so a lock on its inode stops describing the file that is there, and a store that
+does not exist yet still needs one. Reentrant per thread; blocking, not
+timing out. `fcntl` and `msvcrt` both, because Dispatch runs on Windows and the
+suite runs on POSIX.
+
+### `0013` — Build capacity stops from real loads
+
+Closes `KNOWN_LIMITATIONS` §4, which named this as "the next piece of this work".
+
+`dispatch/capacity.py` could evaluate stop sequences and appointment windows
+from the day it was written. None of it ran: `scoring.assess_capacity()` called
+the engine without `stops=`, so every check was unreachable code **with passing
+unit tests**.
+
+Now reachable on a real load, with no new data recorded: a delivery whose
+appointment opens before its pickup, and a window that closes before it opens —
+both BLOCKING.
+
+Four refusals, each guarding against an answer that would look right:
+
+| Refusal | What the alternative would have done |
+|---|---|
+| No naive timestamp reaches the engine | Correct BLOCKING refusal becomes a false alarm on nearly every load |
+| A single recorded time is not a window | A zero-width window demands arrival to the second |
+| An unknown distance is `None`, not `0.0` | Claims the truck arrives the instant it leaves |
+| An unrecorded dwell stays `None` | Makes every appointment look reachable |
+
+The forward walk turns itself on when a distance and a dwell exist. Demonstrated:
+600 miles with a 1.5-hour dwell projects both arrivals and reports a delivery
+window 5.5 hours out of reach.
+
+### Packaging
+
+`ROOT_MANIFEST.md` (522 files, SHA-256 each), `verify_manifest.py` — proven to
+exit 1 on a tampered file and 0 on a clean tree — `TRANSFER_TO_D_DRIVE.md`,
+`BUILD_SUMMARY.md`, and `claude-build-phase3.zip`.
+
+**Dispatch suite: 4,171 → 4,217.**
+
+---
+
+## Phase 2 — 2026-09-12
+
+Twelve corrections to Dispatch, plus this repository's own governance registry,
+worker bus, Joe conversation layer and Microsoft 365 adapter layer.
+
+| | Before | After |
+|---|---|---|
+| Dispatch suite | 3,909 | 4,171 |
+| Coverage gate | 94.74% line, 3 packages | 91.39% branch, 4 packages |
+| `/home` at 2,000 loads | 7,786 ms | 47 ms |
+| 12 concurrent PIN failures | recorded as **1** | recorded as **12** |
+| Proof-path commands that run | 0 of 3 | 3 of 3 |
+| Sandbox suite | 451 passed, 12 failed | 681 passed, 12 skipped |
+
+Patches `0001`–`0012`. Open as PRs #130–#142 against `jax1313-outlook/Dispatch`,
+as a linear stack to be merged in number order.
+
+Also in Phase 2, and found by running the code rather than reading it:
+
+- `after_commit` reset to an empty list instead of `None`, so callbacks outside a
+  transaction queued onto a list nobody drained.
+- `PRAGMA table_info` does not list VIRTUAL generated columns; `table_xinfo`
+  does. The money migration reported 0 of 10 columns present when all 10 were.
+- `BackupStatus.describe()` did not exist. `status_line()` raised on every call
+  and had no test *and* no caller.
+- The booking-conflict parser returned `None` for any offset-bearing timestamp —
+  and `None` means "no conflict found". A double booking read as clear.
+
+### After the PRs opened — a defect CI found
+
+`PRAGMA journal_mode` does not honour `busy_timeout`: SQLite returns
+`SQLITE_BUSY` immediately for a journal-mode change rather than invoking the
+busy handler. Setting it per connection put an unprotectable exclusive lock on
+the first thing every connection did.
+
+| 8 threads opening a fresh database | |
+|---|---|
+| before | 2 of 40 raised `database is locked` |
+| after an ordering-only fix | 1 of 40 — **still wrong** |
+| after the real fix | **0 of 150** |
+
+The first fix was wrong and the reproduction said so. Ordering cannot help a
+statement that ignores the timeout. Fixed at the bottom of the stack and the
+twelve PRs above it rebased.
+
+---
+
+## Phase 1 — 2026-09-12
+
+Ten findings, each with a measurement rather than an opinion. Accepted as the
+baseline for Phase 2.

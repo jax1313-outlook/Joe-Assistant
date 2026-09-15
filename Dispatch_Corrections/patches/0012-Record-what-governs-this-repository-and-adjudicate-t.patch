@@ -1,0 +1,167 @@
+From a5e38bb633ec9fe6c4dd3ba351ce6eb9046b0932 Mon Sep 17 00:00:00 2001
+From: Dispatch Sandbox <jax1313@outlook.com>
+Date: Sat, 12 Sep 2026 21:16:33 +0000
+Subject: [PATCH 12/12] Record what governs this repository, and adjudicate the
+ Manager contradiction
+
+Five repositories carry a constitution and they are not the same constitution.
+v2 sits in Claude, Joe-Assistant and Publisher; v3 in Claude-3 and Library; this
+repository -- the one that actually runs -- carries neither. All of them name a
+Manager component, and CLAUDE.md section 5.6 forbids one while
+tests/test_repository_doctrine.py fails a build over it. An agent cold-starting
+in one of those three repositories reads its constitution and builds toward a
+component this repository rejects.
+
+Manager is neither created nor removed. docs/MANAGER.md is the only document in
+any repository that states its implementation status -- named in planning, never
+built, authorises no code -- and the constitutions describe an intended
+organisational shape rather than ruling on what the program may contain. Two
+different questions, and nothing recorded which one each document answered.
+
+GOVERNANCE.md says, in one place, what governs here and why: this file declares
+itself the entry point, its clauses are the only ones in the programme enforced
+by a test that fails a build, and this is the only repository containing the
+running program. Authority determined from what the repository obeys, not from
+which document is newest.
+
+Nothing is deleted and nothing is merged. Section 7 forbids editing an old
+decision to hide its history, so every superseded document stays byte for byte
+where it is; a pointer beside it is what stops it being read as current.
+
+DISPATCH_CONSTITUTION_v3's own status is left open and recorded as such. Its
+header reads "Current Controlled Constitution - v3 Replacement Draft", no
+repository holds an approval record, and inferring ratification is the
+manufactured approval section 4 forbids. It is registered ADVISORY -- true under
+either reading, and no code decision rests on it.
+---
+ DECISION_LOG.md | 47 +++++++++++++++++++++++++++++++++++++
+ GOVERNANCE.md   | 62 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 109 insertions(+)
+ create mode 100644 GOVERNANCE.md
+
+diff --git a/DECISION_LOG.md b/DECISION_LOG.md
+index 6ef4c10..6ebfdde 100644
+--- a/DECISION_LOG.md
++++ b/DECISION_LOG.md
+@@ -1099,3 +1099,50 @@ orphaned server — has still never been exercised.
+ **Note:** JOE is unaffected. It cannot send at all — Article II of the Assistant Plugin Constitution has eight permitted functions and transmission is not one of them.
+ 
+ ---
++
++---
++
++## 2026-09-12 — Governance authority recorded, and the Manager contradiction adjudicated
++
++**Conflict found.** Five repositories carry a constitution and they are not the
++same constitution: `DISPATCH_CONSTITUTION_v2` in `Claude`, `Joe-Assistant` and
++`Publisher` (byte-identical), `DISPATCH_CONSTITUTION_v3` in `Claude-3` and
++`Library` (byte-identical), and neither in this repository. Across the seven
++repositories there are 87 governance-shaped documents and 18 clusters of
++byte-identical duplicates.
++
++All of the constitutions name a **Manager**: v2 §6 lists "Manager / Control" as a
++core department and §14/§18 forbid "bypassing Manager"; v3 §7.1 describes Manager
++as the Run Office function. `CLAUDE.md` §5.6 forbids creating, restoring,
++referencing or inferring one, and `tests/test_repository_doctrine.py` fails a
++build over it.
++
++An agent cold-starting in one of those three repositories reads its constitution
++and builds toward a component this repository rejects. Reported here per §7
++rather than resolved by editing anything.
++
++**Adjudicated.** Manager is neither created nor removed.
++
++`docs/MANAGER.md` is the only document in any repository that states Manager's
++*implementation* status, and it is unambiguous: named in planning, never built,
++authorises no code, no route, no data model and no runtime behaviour. The
++constitutions describe an intended **organisational shape**; `CLAUDE.md` and its
++tests govern what the **running program** may contain. They answer different
++questions. The fork existed because nothing recorded which question each document
++answers.
++
++**Authority recorded.** From evidence, not recency: `CLAUDE.md` declares itself
++the entry point, its clauses are the only ones in the programme enforced by a
++test that fails a build, and this is the only repository containing the running
++program. `GOVERNANCE.md` (added by this commit) states that in one place, and the
++machine-readable record is `Governance/GOVERNANCE_REGISTRY.json` in the sandbox
++repository, with `python -m dispatch_governance check` as the drift detector.
++
++**Left open, requiring Mike.** `DISPATCH_CONSTITUTION_v3` is headed "Current
++Controlled Constitution - v3 Replacement Draft" — contradictory — and no
++repository holds an approval record for it. Registered ADVISORY, which is true
++under either reading, with no code decision resting on it. Inferring that it was
++ratified would be the manufactured approval §4 forbids outright.
++
++**Superseded, not deleted.** Per §7, every superseded document stays byte for
++byte where it is. What changes is that a pointer beside it says so.
+diff --git a/GOVERNANCE.md b/GOVERNANCE.md
+new file mode 100644
+index 0000000..f7fcae5
+--- /dev/null
++++ b/GOVERNANCE.md
+@@ -0,0 +1,62 @@
++# GOVERNANCE — what actually governs Dispatch
++
++<!--
++Generated by Governance/tools/write_pointers.py from GOVERNANCE_REGISTRY.json.
++Regenerate rather than edit: the registry is the record, this file is a view of it.
++-->
++
++**Programme authority: `Dispatch/CLAUDE.md`.**
++
++Read that first. It is the only governance in this programme whose clauses are
++enforced by a test that fails a build (`Dispatch/tests/test_repository_doctrine.py`),
++which is what makes it the authority rather than one more document with an
++opinion.
++
++## What is current here
++
++- **`CLAUDE.md`** — Programme authority for everything that runs: boundaries, the truth vocabulary, what may and may not be built.
++  <br>Declares itself the first file to read, and its clauses are the only governance in the programme enforced by a test that fails a build (Dispatch/tests/test_repository_doctrine.py).
++- **`DECISION_LOG.md`** — Every adjudicated decision, in order, with its date and reasoning.
++  <br>The record CLAUDE.md section 7 requires a conflict to be reported into.
++- **`tests/test_repository_doctrine.py`** — The clauses of CLAUDE.md asserted against the repository rather than trusted.
++  <br>Governance that is executable. Where a document and this file disagree about what the code may contain, this file is what actually decides, because it is what refuses the merge.
++- **`DISPATCH_PURPOSE_STATEMENT.md`** — The four verbs every feature is measured against.
++- **`DRIVER_FIRST_DOCTRINE_v2.md`** — D1-D15, binding on every driver-facing surface.
++- **`docs/governance/DISPATCH_AUTHORITY_AND_BOUNDARIES.md`** — Human authority: who decides, and what software may never claim.
++- **`docs/architecture/DISPATCH_ARCHITECTURE.md`** — The architecture and the document map.
++
++## What is in this repository and does NOT govern
++
++These files are still here on purpose. `Dispatch/CLAUDE.md` section 7 forbids
++editing an old decision to hide its history — so they are kept, readable, and
++marked, rather than deleted.
++
++- Nothing.
++
++## The one that matters most
++
++`DISPATCH_CONSTITUTION_v2` names a **Manager / Control** department and forbids
++"bypassing Manager". `DISPATCH_CONSTITUTION_v3` describes Manager as the Run
++Office function. **Neither authorises building one.**
++
++`Dispatch/CLAUDE.md` §5.6: *"There is no Manager component in the current
++architecture. Do not create, restore, reference, or infer a Manager component,
++Manager agent, or Manager authority."* `Dispatch/docs/MANAGER.md` records why: it
++was named in planning and never built. `Dispatch/tests/test_repository_doctrine.py`
++enforces the ban with an allowlist of every permissible use of the word, so a
++build that introduces one fails.
++
++The constitutions describe an intended **organisational shape**. CLAUDE.md and
++its tests govern what the **running program** may contain. They are not in
++conflict once the question each answers is stated — and that statement is the
++registry.
++
++## Checking it yourself
++
++```
++python -m dispatch_governance show Dispatch
++python -m dispatch_governance answer "may a Manager component be built into Dispatch"
++python -m dispatch_governance check <directory holding the clones>
++```
++
++Recorded 2026-09-12 from `Governance/GOVERNANCE_REGISTRY.json`.
+-- 
+2.43.0
+

@@ -1,0 +1,156 @@
+From 1e1b02c366c218abe0ea1544ab30334f4c4fd332 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 13 Sep 2026 02:52:34 +0000
+Subject: [PATCH 15/16] Take the transit distance from the rate confirmation
+
+The previous change read distance_miles off the load record, found it
+absent, and honestly reported that the forward walk could not run. The
+report was accurate and the conclusion was one join short: Load has no such
+field, but RateConfirmation does, and that is where the miles live.
+
+So the walk was off for every load in the system -- including the ones that
+had the data.
+
+transit_hours() now falls back to the load's rate confirmation. That is the
+better source anyway: the rate confirmation states the miles the rate was
+agreed against, so it is a distance somebody committed to rather than an
+estimate. A load dict that already carries distance_miles still wins, so a
+caller holding a joined row or a candidate that is not yet a load is not
+forced through the database.
+
+The lookup is failure-tolerant on purpose. A capacity assessment is
+advisory; a store that cannot answer should cost the caller a projected
+arrival time, never an exception on a page they opened to read something
+else.
+
+Demonstrated end to end: a load with appointments and no rate reports
+appointments_evaluated=False and names distance_miles as the gap. Confirm a
+rate at 600 miles and the same load projects both arrivals and reports its
+delivery window 5.5 hours out of reach.
+
+Dispatch suite 4,217 -> 4,220.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PohbRGCKjuPQQ9ZxJhJv83
+---
+ dispatch/load_stops.py   | 35 ++++++++++++++++++++++++++++----
+ tests/test_load_stops.py | 44 ++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 73 insertions(+), 6 deletions(-)
+
+diff --git a/dispatch/load_stops.py b/dispatch/load_stops.py
+index d44a01c..428ac3d 100644
+--- a/dispatch/load_stops.py
++++ b/dispatch/load_stops.py
+@@ -143,6 +143,24 @@ def parse_appointment(value: str | None) -> Appointment:
+ PLANNING_SPEED_MPH = 50.0
+ 
+ 
++def _confirmed_distance(load_id: str):
++    """The miles on the load's rate confirmation, if it has one.
++
++    Import-local and failure-tolerant: a capacity assessment is advisory, and a
++    store that cannot answer should cost the caller a projected arrival time,
++    never an exception on a page they were reading for something else.
++    """
++    if not load_id:
++        return None
++    try:
++        from dispatch import store
++
++        confirmation = store.get_rate_confirmation(load_id)
++    except Exception:  # noqa: BLE001 - advisory path, never the caller's problem
++        return None
++    return (confirmation or {}).get("distance_miles")
++
++
+ def transit_hours(load: dict) -> float | None:
+     """Recorded pickup-to-delivery drive time, or None when nobody recorded it.
+ 
+@@ -156,12 +174,21 @@ def transit_hours(load: dict) -> float | None:
+     None is the honest answer, and the engine already knows what to do with it:
+     it declines to walk the sequence and says why.
+ 
+-    Worth recording: no Dispatch load carries `distance_miles` today. `Load` has
+-    no such field and `create_load()` refuses the keyword. So this returns None
+-    for every load currently in the system, the forward walk stays off, and it
+-    turns on by itself the day a distance is recorded.
++    Where the distance comes from matters. `Load` has no `distance_miles` field
++    and `create_load()` refuses the keyword -- so reading only the load record,
++    as the first version of this did, returns None for every load in the system
++    and the forward walk never runs. The distance is recorded one join away, on
++    the load's **rate confirmation**, which is the document that states the
++    miles the rate was agreed against. That is the right source anyway: it is
++    the distance somebody committed to, not an estimate.
++
++    A load dict that already carries `distance_miles` wins, so a caller holding
++    a joined row or a candidate that is not yet a load is not forced through
++    the database.
+     """
+     distance = load.get("distance_miles")
++    if distance in (None, "", 0, 0.0):
++        distance = _confirmed_distance(load.get("load_id") or "")
+     if distance in (None, "", 0, 0.0):
+         return None
+     try:
+diff --git a/tests/test_load_stops.py b/tests/test_load_stops.py
+index c0144a0..ea74c7f 100644
+--- a/tests/test_load_stops.py
++++ b/tests/test_load_stops.py
+@@ -93,12 +93,52 @@ class TestTransitHours:
+         assert load_stops.transit_hours({"distance_miles": 600}) == 12.0
+         assert load_stops.transit_hours({"distance_miles": "250"}) == 5.0
+ 
+-    def test_no_load_in_dispatch_records_a_distance_today(self):
+-        """Recorded so the day someone adds the field, this test says so."""
++    def test_the_load_record_itself_has_no_distance(self):
++        """Which is why reading only the load, as the first version did, meant
++        the forward walk never ran for anybody."""
+         from dispatch.models import Load
+ 
+         assert not hasattr(Load(), "distance_miles")
+ 
++    def test_it_falls_back_to_the_rate_confirmation(self, tmp_path, monkeypatch):
++        """The distance is one join away, on the document that states the miles
++        the rate was agreed against -- which is the better source anyway: it is
++        the distance somebody committed to, not an estimate."""
++        from dispatch import services
++        from dispatch.db import set_db_path
++
++        monkeypatch.setenv("PORTAL_DATA_DIR", str(tmp_path / "portal"))
++        set_db_path(tmp_path / "dispatch.db")
++        try:
++            created = services.create_load(customer="Join Co")
++            assert load_stops.transit_hours({"load_id": created["load_id"]}) is None
++
++            services.confirm_rate(
++                created["load_id"], rate_amount=2.35, confirmed_by="Mike",
++                rate_type="per_mile", distance_miles=600,
++            )
++            assert load_stops.transit_hours({"load_id": created["load_id"]}) == 12.0
++        finally:
++            set_db_path(None)
++
++    def test_a_distance_on_the_load_dict_wins(self):
++        """A caller holding a joined row, or a candidate that is not a load yet,
++        is not forced through the database."""
++        assert load_stops.transit_hours(
++            {"load_id": "LOAD-NOPE", "distance_miles": 250}
++        ) == 5.0
++
++    def test_a_store_that_cannot_answer_costs_an_arrival_time_not_an_exception(self, monkeypatch):
++        """A capacity assessment is advisory. It must never take down a page
++        somebody opened to read something else."""
++        from dispatch import store
++
++        def explode(_load_id):
++            raise RuntimeError("database is gone")
++
++        monkeypatch.setattr(store, "get_rate_confirmation", explode)
++        assert load_stops.transit_hours({"load_id": "LOAD-X"}) is None
++
+ 
+ # ── building the two stops ───────────────────────────────────────────────
+ 
+-- 
+2.43.0
+

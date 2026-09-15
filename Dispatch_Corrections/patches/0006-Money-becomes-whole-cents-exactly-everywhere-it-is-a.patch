@@ -1,0 +1,972 @@
+From 593de61241fca78ea9091cd0c8c5b21cc6ec134c Mon Sep 17 00:00:00 2001
+From: Dispatch Sandbox <jax1313@outlook.com>
+Date: Sat, 12 Sep 2026 19:30:54 +0000
+Subject: [PATCH 06/12] Money becomes whole cents, exactly, everywhere it is
+ added up
+
+Every monetary column was REAL and every monetary field a float. Decimal
+appeared nowhere in the repository; 102 round() calls appeared instead, which is
+what a program looks like when it patches drift at each display site while the
+accumulator keeps it:
+
+    300 fuel surcharges of 18.35  ->  5505.000000000014
+    Settlement.net_payment         ->  payment_amount - factoring_fee, unrounded
+
+The service layer already knew. get_financial_dashboard() carries a comment
+recording that summing raw floats made two reports disagree by pennies on
+identical data, and the workaround adopted was round-then-sum. That holds until
+the rounding is the thing under audit -- and services.compute_ifta_report()
+computes tax owed for a government filing.
+
+dispatch/money.py is the type: integer cents, ROUND_HALF_UP at the single
+boundary where a decimal fraction exists (Python's round() gives 0.12 for 0.125;
+an invoice gives 0.13), multiplication that rounds once, and allocate() so a
+split of 100.00 three ways sums back to 100.00 instead of losing a penny.
+
+dispatch/money_schema.py is the migration, and it is DDL only. Each monetary
+column gains a generated `<name>_cents` INTEGER companion computed by SQLite
+from the column itself. No rows are rewritten, so it is instant and reversible;
+there is no write path to forget, no trigger to mis-order, and no backfill that
+can be interrupted half way. A double represents any 2-decimal amount to far
+better than half a cent, so ROUND(amount * 100) recovers the cent that was
+actually typed -- float drift is a property of accumulation, not of one stored
+value, which is why deriving cents loses nothing and why every sum, product and
+comparison now runs in cents.
+
+The REAL columns stay, unchanged, so every existing reader is untouched. When
+the last of them is gone the generated column can be materialised and the REAL
+one dropped. Until then there is one value with two views, never two values.
+
+verify_money_integrity() reports amounts that were never whole cents -- an
+import, a four-decimal per-mile rate -- and does not correct them, because which
+way 10.007 should go is a decision about somebody's invoice.
+---
+ dispatch/db.py           |   8 +-
+ dispatch/money.py        | 180 +++++++++++++++++++++++++++++++
+ dispatch/money_schema.py | 191 ++++++++++++++++++++++++++++++++
+ dispatch/services.py     |  41 +++----
+ dispatch/store.py        |  68 ++++++++----
+ tests/test_money.py      | 228 +++++++++++++++++++++++++++++++++++++++
+ 6 files changed, 678 insertions(+), 38 deletions(-)
+ create mode 100644 dispatch/money.py
+ create mode 100644 dispatch/money_schema.py
+ create mode 100644 tests/test_money.py
+
+diff --git a/dispatch/db.py b/dispatch/db.py
+index f5754c8..e642447 100644
+--- a/dispatch/db.py
++++ b/dispatch/db.py
+@@ -505,6 +505,12 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
+     from dispatch.rehearsal import init_rehearsal_schema
+ 
+     init_rehearsal_schema(conn)
++    # Exact whole-cent companions for every monetary REAL column. Generated
++    # columns, so there is no write path to forget and no backfill to interrupt.
++    # See dispatch/money_schema.py for why the REAL column stays.
++    from dispatch.money_schema import init_money_schema
++
++    init_money_schema(conn)
+ 
+ 
+ #: How long a writer waits for another writer's lock before giving up.
+@@ -522,7 +528,7 @@ BUSY_TIMEOUT_MS = int(os.environ.get("DISPATCH_SQLITE_BUSY_TIMEOUT_MS", "5000"))
+ #: `schema_state` after a successful initialisation so a later connection can
+ #: tell "already built, and built by this version of the code" from "built by
+ #: an older one" with a single cheap read.
+-SCHEMA_REVISION = 2
++SCHEMA_REVISION = 3
+ 
+ #: Database paths this *process* has already initialised. The expensive part of
+ #: `_init_db` is not the work, it is that it ran on every one of the ~160
+diff --git a/dispatch/money.py b/dispatch/money.py
+new file mode 100644
+index 0000000..2ddeca4
+--- /dev/null
++++ b/dispatch/money.py
+@@ -0,0 +1,180 @@
++"""Money as whole cents. One representation, one rounding rule, no drift.
++
++Every monetary column in this schema was declared REAL and every monetary field
++was a Python float, so `rate_amount`, `invoice_amount`, `payment_amount`,
++`factoring_fee`, driver pay and IFTA fuel all carried binary fractions that
++cannot represent a decimal cent. `Decimal` appears nowhere in the repository;
++what does appear is 102 `round()` calls, which is the shape of a program
++patching drift at every display site while the accumulator keeps it:
++
++    300 fuel surcharges of 18.35   ->  5505.000000000014
++    Settlement.net_payment          ->  payment_amount - factoring_fee, unrounded
++
++The service layer knew. `get_financial_dashboard()` carries a comment recording
++that summing raw floats made two reports disagree by pennies on identical data,
++and the workaround adopted was to round every row before adding it. That works
++right up until the rounding itself is the thing under audit -- and
++`services.compute_ifta_report()` computes tax owed for a government filing.
++
++So money stops being a float.
++
++**Integer cents, not Decimal.** SQLite stores INTEGER exactly and REAL as a
++double; a Decimal would have to be serialised to TEXT and parsed back on every
++read, and one bad parse anywhere silently becomes a wrong number. An integer
++count of cents is exact in the database, exact in Python, exact in JSON, and
++sorts and sums correctly in SQL. Decimal is used here only at the boundary,
++where a string or float becomes cents, because that is the one place a decimal
++fraction genuinely exists.
++
++**ROUND_HALF_UP, not banker's rounding.** Python's built-in `round()` rounds
++halves to even: `round(0.125, 2)` is 0.12. Invoices, settlements and tax
++schedules round halves away from zero. Every conversion here uses ROUND_HALF_UP
++so that what Dispatch prints is what an accountant, a broker and a state fuel-tax
++form all expect, and so that the same input always produces the same cent.
++
++**Allocation, not division.** Splitting $100.00 three ways as 33.33 x 3 loses a
++penny. `allocate()` distributes the remainder deterministically so the parts
++always sum exactly to the whole -- which is what a settlement split across two
++drivers, or a fuel surcharge apportioned across jurisdictions, requires.
++"""
++
++from __future__ import annotations
++
++from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
++from typing import Iterable
++
++CENTS = Decimal("0.01")
++
++
++class MoneyError(ValueError):
++    """A value that cannot be a monetary amount."""
++
++
++def to_cents(value) -> int:
++    """Any reasonable representation of an amount -> whole cents.
++
++    Accepts int cents-free amounts as dollars (``5`` is $5.00, not 5c), floats,
++    strings with or without a currency symbol or thousands separators, Decimals,
++    and None (which is zero). A float is converted through its shortest repr
++    rather than its binary expansion: `Decimal(2675.15)` is
++    2675.1500000000000909..., and rounding *that* is how a value that was typed
++    as 2675.15 becomes 2675.16 at some later scale.
++    """
++    if value is None:
++        return 0
++    if isinstance(value, bool):  # bool is an int; refuse it before it becomes $1
++        raise MoneyError(f"not a monetary amount: {value!r}")
++    if isinstance(value, int):
++        return value * 100
++    if isinstance(value, Decimal):
++        dec = value
++    elif isinstance(value, float):
++        dec = Decimal(repr(value))
++    elif isinstance(value, str):
++        text = value.strip().replace(",", "").replace("$", "")
++        if not text:
++            return 0
++        negative = text.startswith("(") and text.endswith(")")  # (12.34) accounting negative
++        if negative:
++            text = text[1:-1]
++        try:
++            dec = Decimal(text)
++        except InvalidOperation as exc:
++            raise MoneyError(f"not a monetary amount: {value!r}") from exc
++        if negative:
++            dec = -dec
++    else:
++        raise MoneyError(f"not a monetary amount: {value!r}")
++
++    if not dec.is_finite():
++        raise MoneyError(f"not a monetary amount: {value!r}")
++    return int(dec.quantize(CENTS, rounding=ROUND_HALF_UP) * 100)
++
++
++def to_decimal(cents: int) -> Decimal:
++    """Cents -> an exact Decimal amount. Use this for anything printed or filed."""
++    return (Decimal(int(cents)) / 100).quantize(CENTS)
++
++
++def to_float(cents: int) -> float:
++    """Cents -> float, for the JSON and template surfaces that still expect one.
++
++    Lossy by nature, and deliberately the last step rather than the first: the
++    float is produced from an exact value at the moment of display, so it is
++    never accumulated and never stored.
++    """
++    return float(to_decimal(cents))
++
++
++def format_money(cents: int, *, symbol: str = "$") -> str:
++    """`-$1,234.50`. Negative sign outside the symbol, thousands separated."""
++    sign = "-" if cents < 0 else ""
++    whole, part = divmod(abs(int(cents)), 100)
++    return f"{sign}{symbol}{whole:,}.{part:02d}"
++
++
++def multiply(cents: int, factor) -> int:
++    """Cents x a rate (miles, hours, a percentage already divided by 100).
++
++    The multiplication happens in Decimal and rounds once, at the end. Multiplying
++    floats and rounding at each step is how a per-mile rate over 1,140 miles ends
++    up a cent away from the same calculation done on paper.
++    """
++    if isinstance(factor, float):
++        factor = Decimal(repr(factor))
++    elif not isinstance(factor, Decimal):
++        factor = Decimal(str(factor))
++    product = (Decimal(int(cents)) * factor).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
++    return int(product)
++
++
++def percentage(cents: int, percent) -> int:
++    """`percent` per cent of `cents`, rounded once. 27% of $2,675.15 is $722.29."""
++    if isinstance(percent, float):
++        percent = Decimal(repr(percent))
++    elif not isinstance(percent, Decimal):
++        percent = Decimal(str(percent))
++    return multiply(cents, percent / 100)
++
++
++def total(values: Iterable[int]) -> int:
++    """Sum cents. Exact by construction -- this is the whole point of the type."""
++    return sum(int(v) for v in values)
++
++
++def allocate(cents: int, weights: list) -> list[int]:
++    """Split an amount so the parts sum exactly to the whole.
++
++    100.00 split three ways is 33.34 / 33.33 / 33.33, not 33.33 x 3 with a penny
++    unaccounted for. The remainder goes to the earliest parts, which is
++    arbitrary but deterministic -- the property that matters is that
++    `sum(allocate(x, w)) == x` for every input, so a settlement split never
++    invents or loses money.
++    """
++    if not weights:
++        raise MoneyError("cannot allocate across no weights")
++    decs = [Decimal(str(w)) for w in weights]
++    if any(w < 0 for w in decs):
++        raise MoneyError("allocation weights cannot be negative")
++    weight_total = sum(decs)
++    if weight_total == 0:
++        raise MoneyError("allocation weights sum to zero")
++
++    amount = int(cents)
++    parts = [
++        int((Decimal(amount) * w / weight_total).to_integral_value(rounding="ROUND_DOWN"))
++        for w in decs
++    ]
++    remainder = amount - sum(parts)
++    step = 1 if remainder >= 0 else -1
++    index = 0
++    while remainder != 0:
++        parts[index % len(parts)] += step
++        remainder -= step
++        index += 1
++    return parts
++
++
++def is_cents_column(name: str) -> bool:
++    """The naming convention that makes the representation self-describing."""
++    return name.endswith("_cents")
+diff --git a/dispatch/money_schema.py b/dispatch/money_schema.py
+new file mode 100644
+index 0000000..6b417e2
+--- /dev/null
++++ b/dispatch/money_schema.py
+@@ -0,0 +1,191 @@
++"""Exact whole-cent companions for every monetary column.
++
++`dispatch/money.py` explains why money stops being a float. This module is how
++the existing tables get there without a rewrite of every write path and without
++a data migration that can half-finish.
++
++Each monetary REAL column gains a generated `<name>_cents` INTEGER column:
++
++    ALTER TABLE expenses ADD COLUMN amount_cents INTEGER
++        GENERATED ALWAYS AS (CAST(ROUND(amount * 100) AS INTEGER)) VIRTUAL
++
++Three properties make this the right shape rather than a second column somebody
++has to remember to update:
++
++**It cannot drift.** A generated column is computed by SQLite on read, from the
++column it derives from. There is no write path to forget, no trigger to
++mis-order, no backfill that can be interrupted, and no window in which the two
++disagree. Adding it is pure DDL -- no rows are rewritten, so it is instant on a
++large table and it is reversible by dropping the column.
++
++**It recovers the exact intended amount.** A double can represent any 2-decimal
++amount to far better than half a cent, so `ROUND(amount * 100)` returns the cent
++the operator actually typed. Float drift is a property of *accumulation*, not of
++a single stored value -- which is why the fix is to do every sum, product and
++comparison in cents, and why deriving cents from the stored double loses nothing.
++
++**It is honest about what is authoritative.** The REAL column remains what every
++existing reader sees, unchanged, so nothing breaks. The cents column is what
++arithmetic uses. When the last reader of a REAL column is gone, the generated
++column can be materialised and the REAL one dropped; until then there is one
++value with two views of it, never two values.
++
++SQLite has supported generated columns since 3.31 (2020). Python 3.11 ships
++3.34+, so every supported interpreter has it. A database on an older library
++falls back to computing cents in Python at the point of use -- slower, same
++answer -- rather than failing to start, because refusing to run is a worse
++outcome than a slow report on a machine that is otherwise fine.
++"""
++
++from __future__ import annotations
++
++import sqlite3
++
++#: table -> the REAL columns on it that hold money.
++MONETARY_COLUMNS: dict[str, tuple[str, ...]] = {
++    "rate_confirmations": ("rate_amount",),
++    "expenses": ("amount",),
++    "settlements": ("invoice_amount", "payment_amount", "factoring_fee"),
++    "detention_events": ("hourly_rate",),
++    "ifta_fuel_purchases": ("amount",),
++    "driver_pay": ("amount", "rate"),
++    "maintenance_schedules": ("cost_estimate",),
++}
++
++
++def cents_column(name: str) -> str:
++    return f"{name}_cents"
++
++
++def _generated_column_sql(table: str, column: str) -> str:
++    return (
++        f"ALTER TABLE {table} ADD COLUMN {cents_column(column)} INTEGER "
++        f"GENERATED ALWAYS AS (CAST(ROUND({column} * 100) AS INTEGER)) VIRTUAL"
++    )
++
++
++def supports_generated_columns() -> bool:
++    return sqlite3.sqlite_version_info >= (3, 31, 0)
++
++
++def init_money_schema(conn: sqlite3.Connection) -> dict:
++    """Add every missing `_cents` column. Idempotent; reports what it found.
++
++    Returns a summary rather than nothing so `readiness` can state the fact
++    ("cents columns: 10 of 10") instead of asserting it.
++    """
++    added: list[str] = []
++    present: list[str] = []
++    unsupported: list[str] = []
++
++    if not supports_generated_columns():
++        return {
++            "supported": False,
++            "added": [],
++            "present": [],
++            "unsupported": [
++                f"{t}.{cents_column(c)}" for t, cols in MONETARY_COLUMNS.items() for c in cols
++            ],
++            "sqlite_version": sqlite3.sqlite_version,
++        }
++
++    for table, columns in MONETARY_COLUMNS.items():
++        try:
++            # table_xinfo, not table_info: a VIRTUAL generated column is hidden
++            # from table_info, so checking there would report every cents column
++            # as missing and re-run the ALTER on every startup.
++            existing = {
++                row[1] for row in conn.execute(f"PRAGMA table_xinfo({table})").fetchall()
++            }
++        except sqlite3.Error:
++            continue  # the table is not in this database yet; _SCHEMA creates it first
++        if not existing:
++            continue
++        for column in columns:
++            if column not in existing:
++                continue
++            target = cents_column(column)
++            if target in existing:
++                present.append(f"{table}.{target}")
++                continue
++            try:
++                conn.execute(_generated_column_sql(table, column))
++                added.append(f"{table}.{target}")
++            except sqlite3.OperationalError:
++                # Already present under a race, or refused by this library.
++                unsupported.append(f"{table}.{target}")
++
++    return {
++        "supported": True,
++        "added": added,
++        "present": present,
++        "unsupported": unsupported,
++        "sqlite_version": sqlite3.sqlite_version,
++    }
++
++
++def money_column_report(conn: sqlite3.Connection) -> dict:
++    """Which monetary columns have an exact companion, and which do not."""
++    rows = []
++    for table, columns in MONETARY_COLUMNS.items():
++        try:
++            existing = {r[1] for r in conn.execute(f"PRAGMA table_xinfo({table})").fetchall()}
++        except sqlite3.Error:
++            existing = set()
++        for column in columns:
++            rows.append(
++                {
++                    "table": table,
++                    "column": column,
++                    "cents_column": cents_column(column),
++                    "present": cents_column(column) in existing,
++                }
++            )
++    return {
++        "rows": rows,
++        "complete": all(r["present"] for r in rows),
++        "covered": sum(1 for r in rows if r["present"]),
++        "total": len(rows),
++    }
++
++
++def verify_money_integrity(conn: sqlite3.Connection, *, epsilon: float = 1e-6) -> dict:
++    """Prove every stored amount really is a whole number of cents.
++
++    A generated column cannot drift out of step with the column it derives from,
++    so this is not checking SQLite. It is checking the *data*: a REAL value that
++    is not a whole number of cents -- 10.007 from a third-party import, a
++    per-mile rate typed to four decimals, a figure computed by an older version
++    of this program and written back unrounded -- converts to cents by rounding,
++    and rounding a value nobody intended to round is exactly the kind of silent
++    money change this migration exists to end.
++
++    Reported, never corrected here. Which way 10.007 should go is a decision
++    about somebody's invoice, and this module has no standing to make it.
++    """
++    findings = []
++    for table, columns in MONETARY_COLUMNS.items():
++        for column in columns:
++            cents = cents_column(column)
++            try:
++                rows = conn.execute(
++                    f"SELECT rowid, {column} AS amount, {cents} AS cents FROM {table} "
++                    f"WHERE {column} IS NOT NULL"
++                ).fetchall()
++            except sqlite3.Error:
++                continue
++            for row in rows:
++                scaled = row["amount"] * 100
++                fractional = abs(scaled - round(scaled))
++                if fractional > epsilon:
++                    findings.append(
++                        {
++                            "table": table,
++                            "column": column,
++                            "rowid": row["rowid"],
++                            "stored": row["amount"],
++                            "rounds_to_cents": row["cents"],
++                            "sub_cent_remainder": fractional / 100,
++                        }
++                    )
++    return {"ok": not findings, "findings": findings}
+diff --git a/dispatch/services.py b/dispatch/services.py
+index 26e7e9b..0196c37 100644
+--- a/dispatch/services.py
++++ b/dispatch/services.py
+@@ -38,7 +38,7 @@ from dispatch.models import (
+     Settlement,
+     _utc_now,
+ )
+-from dispatch import db, notifications, store
++from dispatch import db, money, notifications, store
+ 
+ 
+ import sys
+@@ -1301,31 +1301,35 @@ def get_financial_dashboard() -> dict:
+     rows = store.get_load_financial_rows()
+     settlement_totals = store.get_settlement_rollup()
+ 
+-    total_revenue = 0.0
+-    total_expenses = 0.0
++    revenue_cents = 0
++    expenses_cents = 0
+     loads_with_rate = 0
+ 
+     for row in rows:
+         if row["has_rate"]:
+-            total_revenue += round(row["revenue"], 2)
++            revenue_cents += row["revenue_cents"]
+             loads_with_rate += 1
+-        total_expenses += round(row["expense_total"], 2)
++        expenses_cents += row["expense_total_cents"]
+ 
+-    total_paid = settlement_totals["total_paid"]
+-    total_outstanding = settlement_totals["total_outstanding"]
+-
+-    total_profit = total_revenue - total_expenses
+-    margin_pct = (total_profit / total_revenue * 100) if total_revenue > 0 else 0.0
++    paid_cents = settlement_totals["total_paid_cents"]
++    outstanding_cents = settlement_totals["total_outstanding_cents"]
++    profit_cents = revenue_cents - expenses_cents
++    margin_pct = (profit_cents / revenue_cents * 100) if revenue_cents > 0 else 0.0
+ 
+     return {
+         "total_loads": len(rows),
+         "loads_with_rate": loads_with_rate,
+-        "total_revenue": round(total_revenue, 2),
+-        "total_expenses": round(total_expenses, 2),
+-        "total_profit": round(total_profit, 2),
++        "total_revenue": money.to_float(revenue_cents),
++        "total_expenses": money.to_float(expenses_cents),
++        "total_profit": money.to_float(profit_cents),
+         "margin_pct": round(margin_pct, 1),
+-        "total_paid": round(total_paid, 2),
+-        "total_outstanding": round(total_outstanding, 2),
++        "total_paid": money.to_float(paid_cents),
++        "total_outstanding": money.to_float(outstanding_cents),
++        "total_revenue_cents": revenue_cents,
++        "total_expenses_cents": expenses_cents,
++        "total_profit_cents": profit_cents,
++        "total_paid_cents": paid_cents,
++        "total_outstanding_cents": outstanding_cents,
+         "invoiced_count": settlement_totals["invoiced_count"],
+         "paid_count": settlement_totals["paid_count"],
+         "overdue_count": settlement_totals["overdue_count"],
+@@ -1344,7 +1348,7 @@ def get_chart_data() -> dict:
+     rows = store.get_load_financial_rows()
+ 
+     status_counts: dict[str, int] = defaultdict(int)
+-    monthly_revenue: dict[str, float] = defaultdict(float)
++    monthly_revenue: dict[str, int] = defaultdict(int)
+     monthly_loads: dict[str, int] = defaultdict(int)
+     for row in rows:
+         status_counts[row["status"]] += 1
+@@ -1352,14 +1356,15 @@ def get_chart_data() -> dict:
+         month_key = created[:7] if len(created) >= 7 else "unknown"
+         monthly_loads[month_key] += 1
+         if row["has_rate"]:
+-            monthly_revenue[month_key] += row["revenue"]
++            monthly_revenue[month_key] += row["revenue_cents"]
+ 
+     months_sorted = sorted(set(monthly_revenue.keys()) | set(monthly_loads.keys()))
+ 
+     return {
+         "loads_by_status": dict(status_counts),
+         "monthly_revenue": [
+-            {"month": m, "revenue": round(monthly_revenue.get(m, 0), 2),
++            {"month": m, "revenue": money.to_float(monthly_revenue.get(m, 0)),
++             "revenue_cents": monthly_revenue.get(m, 0),
+              "loads": monthly_loads.get(m, 0)}
+             for m in months_sorted
+         ],
+diff --git a/dispatch/store.py b/dispatch/store.py
+index c8775b9..525bcb9 100644
+--- a/dispatch/store.py
++++ b/dispatch/store.py
+@@ -2,10 +2,11 @@
+ 
+ from __future__ import annotations
+ 
++import dataclasses
+ import json
+ import math
+ 
+-from dispatch import rehearsal
++from dispatch import money, rehearsal
+ from dispatch.db import deserialize_json_fields, dict_from_row, get_connection
+ from dispatch.models import (
+     DetentionEvent,
+@@ -30,6 +31,21 @@ from dispatch.models import (
+     Settlement,
+ )
+ 
++
++def _model_kwargs(cls, row: dict) -> dict:
++    """Keep only the fields the dataclass declares.
++
++    `SELECT *` now also returns the generated `<column>_cents` companions (see
++    dispatch/money_schema.py). They are a *view* of a column the dataclass
++    already has, not a field of the model, so handing them to the constructor
++    would be a TypeError on every read. Filtering here rather than naming every
++    column in every SELECT keeps the queries readable and means a column added
++    to a table later does not break a read before anyone has used it.
++    """
++    allowed = {f.name for f in dataclasses.fields(cls)}
++    return {k: v for k, v in row.items() if k in allowed}
++
++
+ DEFAULT_PER_PAGE = 25
+ MAX_PER_PAGE = 100
+ 
+@@ -98,7 +114,7 @@ def _one_rate_confirmation_per_load() -> str:
+     exactly, including in that broken case.
+     """
+     return """
+-        SELECT load_id, rate_amount, rate_type, distance_miles
++        SELECT load_id, rate_amount, rate_amount_cents, rate_type, distance_miles
+           FROM rate_confirmations
+          WHERE rowid IN (SELECT MIN(rowid) FROM rate_confirmations GROUP BY load_id)
+     """
+@@ -122,20 +138,30 @@ def get_load_financial_rows(*, include_rehearsal: bool = True) -> list[dict]:
+                rc.load_id IS NOT NULL AS has_rate,
+                CASE
+                    WHEN rc.rate_type = 'per_mile' AND COALESCE(rc.distance_miles, 0) != 0
+-                       THEN rc.rate_amount * rc.distance_miles
+-                   ELSE COALESCE(rc.rate_amount, 0)
+-               END                  AS revenue,
+-               COALESCE(ex.total, 0) AS expense_total
++                       THEN CAST(ROUND(rc.rate_amount_cents * rc.distance_miles) AS INTEGER)
++                   ELSE COALESCE(rc.rate_amount_cents, 0)
++               END                  AS revenue_cents,
++               COALESCE(ex.total_cents, 0) AS expense_total_cents
+           FROM loads l
+           LEFT JOIN ({_one_rate_confirmation_per_load()}) rc ON rc.load_id = l.load_id
+           LEFT JOIN (
+-                SELECT load_id, SUM(amount) AS total FROM expenses GROUP BY load_id
++                SELECT load_id, SUM(amount_cents) AS total_cents FROM expenses GROUP BY load_id
+           ) ex ON ex.load_id = l.load_id
+         {where}
+     """
+     with get_connection() as conn:
+         rows = conn.execute(sql).fetchall()
+-    return [dict_from_row(r) for r in rows]
++
++    out = []
++    for row in rows:
++        record = dict_from_row(row)
++        # Float views for the templates and JSON that still expect them,
++        # produced from the exact value at the last moment rather than
++        # accumulated. Callers doing arithmetic use the _cents fields.
++        record["revenue"] = money.to_float(record["revenue_cents"])
++        record["expense_total"] = money.to_float(record["expense_total_cents"])
++        out.append(record)
++    return out
+ 
+ 
+ def get_settlement_rollup() -> dict:
+@@ -148,9 +174,10 @@ def get_settlement_rollup() -> dict:
+     sql = """
+         SELECT
+             COALESCE(SUM(CASE WHEN payment_status = 'paid'
+-                              THEN payment_amount - factoring_fee ELSE 0 END), 0) AS total_paid,
++                              THEN payment_amount_cents - factoring_fee_cents
++                              ELSE 0 END), 0)                                     AS total_paid_cents,
+             COALESCE(SUM(CASE WHEN payment_status IN ('invoiced', 'overdue')
+-                              THEN invoice_amount ELSE 0 END), 0)                 AS total_outstanding,
++                              THEN invoice_amount_cents ELSE 0 END), 0)           AS total_outstanding_cents,
+             COALESCE(SUM(CASE WHEN payment_status = 'invoiced' THEN 1 ELSE 0 END), 0) AS invoiced_count,
+             COALESCE(SUM(CASE WHEN payment_status = 'paid'     THEN 1 ELSE 0 END), 0) AS paid_count,
+             COALESCE(SUM(CASE WHEN payment_status = 'overdue'  THEN 1 ELSE 0 END), 0) AS overdue_count
+@@ -158,7 +185,10 @@ def get_settlement_rollup() -> dict:
+     """
+     with get_connection() as conn:
+         row = conn.execute(sql).fetchone()
+-    return dict_from_row(row)
++    record = dict_from_row(row)
++    record["total_paid"] = money.to_float(record["total_paid_cents"])
++    record["total_outstanding"] = money.to_float(record["total_outstanding_cents"])
++    return record
+ 
+ 
+ 
+@@ -678,7 +708,7 @@ def get_rate_confirmation(load_id: str) -> dict | None:
+     if not row:
+         return None
+     d = dict_from_row(row)
+-    rc = RateConfirmation(**d)
++    rc = RateConfirmation(**_model_kwargs(RateConfirmation, d))
+     return rc.to_dict()
+ 
+ 
+@@ -791,7 +821,7 @@ def get_settlement(load_id: str) -> dict | None:
+     if not row:
+         return None
+     d = dict_from_row(row)
+-    stl = Settlement(**d)
++    stl = Settlement(**_model_kwargs(Settlement, d))
+     return stl.to_dict()
+ 
+ 
+@@ -854,7 +884,7 @@ def list_settlements(
+ 
+     def settlement_mapper(r):
+         d = dict_from_row(r)
+-        return Settlement(**d).to_dict()
++        return Settlement(**_model_kwargs(Settlement, d)).to_dict()
+ 
+     with get_connection() as conn:
+         return _paginate(sql, params, conn, page=page, per_page=per_page, row_mapper=settlement_mapper)
+@@ -1162,7 +1192,7 @@ def get_detention(detention_id: str) -> dict | None:
+     if not row:
+         return None
+     d = dict_from_row(row)
+-    det = DetentionEvent(**d)
++    det = DetentionEvent(**_model_kwargs(DetentionEvent, d))
+     return det.to_dict()
+ 
+ 
+@@ -1184,7 +1214,7 @@ def list_detentions(load_id: str | None = None, status: str | None = None) -> li
+     results = []
+     for r in rows:
+         d = dict_from_row(r)
+-        det = DetentionEvent(**d)
++        det = DetentionEvent(**_model_kwargs(DetentionEvent, d))
+         results.append(det.to_dict())
+     return results
+ 
+@@ -1406,7 +1436,7 @@ def global_search(query: str, limit: int = 50) -> dict:
+         stl_results = []
+         for r in rows:
+             d = dict_from_row(r)
+-            stl_results.append(Settlement(**d).to_dict())
++            stl_results.append(Settlement(**_model_kwargs(Settlement, d)).to_dict())
+         results["settlements"] = stl_results
+ 
+     results["brokers"] = list_broker_contacts(search=query)[:limit]
+@@ -1529,7 +1559,7 @@ def get_ifta_fuel_purchase(purchase_id: str) -> dict | None:
+     if not row:
+         return None
+     d = dict_from_row(row)
+-    return IFTAFuelPurchase(**d).to_dict()
++    return IFTAFuelPurchase(**_model_kwargs(IFTAFuelPurchase, d)).to_dict()
+ 
+ 
+ def list_ifta_fuel_purchases(
+@@ -1558,7 +1588,7 @@ def list_ifta_fuel_purchases(
+             f"SELECT * FROM ifta_fuel_purchases WHERE {where} ORDER BY date DESC",
+             params,
+         ).fetchall()
+-    return [IFTAFuelPurchase(**dict_from_row(r)).to_dict() for r in rows]
++    return [IFTAFuelPurchase(**_model_kwargs(IFTAFuelPurchase, dict_from_row(r))).to_dict() for r in rows]
+ 
+ 
+ def delete_ifta_fuel_purchase(purchase_id: str) -> bool:
+diff --git a/tests/test_money.py b/tests/test_money.py
+new file mode 100644
+index 0000000..6ce9dac
+--- /dev/null
++++ b/tests/test_money.py
+@@ -0,0 +1,228 @@
++"""Money is exact, or it is not money.
++
++Every monetary column in this schema was REAL and every monetary field a float.
++`Decimal` appeared nowhere; 102 `round()` calls appeared instead, which is the
++signature of a program patching drift at each display site while the accumulator
++keeps it. The service layer had already recorded the symptom -- two financial
++reports disagreeing by pennies on identical data -- and adopted round-then-sum
++as the workaround.
++
++These tests pin the replacement: whole cents end to end, ROUND_HALF_UP at the one
++boundary where a decimal fraction genuinely exists, and totals that are exact
++rather than nearly right.
++"""
++
++from __future__ import annotations
++
++from decimal import Decimal
++
++import pytest
++
++from dispatch import money, services, store
++from dispatch.db import get_connection, set_db_path
++from dispatch.money_schema import (
++    MONETARY_COLUMNS,
++    init_money_schema,
++    money_column_report,
++    verify_money_integrity,
++)
++
++
++@pytest.fixture
++def database(tmp_path):
++    set_db_path(tmp_path / "dispatch.db")
++    try:
++        yield
++    finally:
++        set_db_path(None)
++
++
++class TestConversion:
++    @pytest.mark.parametrize(
++        "value,cents",
++        [
++            (2675.15, 267515),
++            ("2675.15", 267515),
++            ("$2,675.15", 267515),
++            ("(12.34)", -1234),  # accounting negative
++            (Decimal("0.01"), 1),
++            (5, 500),            # a bare int is dollars, not cents
++            (0, 0),
++            (None, 0),
++            ("", 0),
++            (-18.35, -1835),
++        ],
++    )
++    def test_amounts_convert_exactly(self, value, cents):
++        assert money.to_cents(value) == cents
++
++    def test_a_float_converts_through_its_repr_not_its_binary_expansion(self):
++        """Decimal(2675.15) is 2675.15000000000009094947...; rounding that is how
++        a value typed as 2675.15 becomes 2675.16 at some later scale."""
++        assert money.to_cents(2675.15) == 267515
++        assert money.to_cents(0.1 + 0.2) == 30
++
++    def test_halves_round_away_from_zero_not_to_even(self):
++        """Python's round() gives 0.12 here. Invoices and tax schedules give 0.13."""
++        assert round(0.125, 2) == 0.12  # the behaviour being rejected
++        assert money.to_cents("0.125") == 13
++        assert money.to_cents("0.135") == 14
++        assert money.to_cents("-0.125") == -13
++
++    @pytest.mark.parametrize("bad", [True, False, "abc", "12.3.4", float("nan"), float("inf"), object()])
++    def test_a_non_amount_is_refused_rather_than_coerced(self, bad):
++        with pytest.raises(money.MoneyError):
++            money.to_cents(bad)
++
++    def test_round_trips_to_a_display_value(self):
++        assert money.to_float(267515) == 2675.15
++        assert money.to_decimal(267515) == Decimal("2675.15")
++        assert money.format_money(-123450) == "-$1,234.50"
++        assert money.format_money(0) == "$0.00"
++        assert money.format_money(5) == "$0.05"
++
++
++class TestArithmetic:
++    def test_accumulation_is_exact(self):
++        """300 fuel surcharges of 18.35 as floats give 5505.000000000014."""
++        as_floats = 0.0
++        for _ in range(300):
++            as_floats += 18.35
++        assert as_floats != 5505.00
++
++        assert money.total([money.to_cents(18.35)] * 300) == money.to_cents(5505.00)
++
++    def test_a_percentage_matches_the_paper_calculation(self):
++        assert money.percentage(money.to_cents(2675.15), 27) == money.to_cents(722.29)
++
++    def test_a_rate_over_distance_rounds_once(self):
++        cents = money.multiply(money.to_cents(2.47), 1140)
++        assert cents == money.to_cents(2815.80)
++
++    def test_an_allocation_never_invents_or_loses_a_penny(self):
++        parts = money.allocate(money.to_cents(100), [1, 1, 1])
++        assert sum(parts) == money.to_cents(100)
++        assert parts == [3334, 3333, 3333]
++
++    @pytest.mark.parametrize("amount", [1, 7, 99, 100_00, 123_45, -50_01])
++    @pytest.mark.parametrize("weights", [[1], [1, 1], [1, 2, 3], [5, 5, 5, 5, 5, 5, 5]])
++    def test_allocation_always_sums_to_the_whole(self, amount, weights):
++        assert sum(money.allocate(amount, weights)) == amount
++
++    def test_allocation_refuses_impossible_inputs(self):
++        with pytest.raises(money.MoneyError):
++            money.allocate(100, [])
++        with pytest.raises(money.MoneyError):
++            money.allocate(100, [0, 0])
++        with pytest.raises(money.MoneyError):
++            money.allocate(100, [1, -1])
++
++
++class TestTheStoredRepresentation:
++    def test_every_monetary_column_has_an_exact_companion(self, database):
++        with get_connection() as conn:
++            report = money_column_report(conn)
++        assert report["complete"], [r for r in report["rows"] if not r["present"]]
++        assert report["total"] == sum(len(c) for c in MONETARY_COLUMNS.values())
++
++    def test_the_companion_recovers_the_amount_that_was_entered(self, database):
++        load = services.create_load(customer="Acme")
++        services.confirm_rate(load["load_id"], rate_amount=2675.15, confirmed_by="Mike")
++        with get_connection() as conn:
++            row = conn.execute(
++                "SELECT rate_amount, rate_amount_cents FROM rate_confirmations"
++            ).fetchone()
++        assert row["rate_amount_cents"] == 267515
++
++    def test_it_tracks_an_update_with_no_write_path_of_its_own(self, database):
++        """A generated column cannot be forgotten, which is the reason it is one."""
++        load = services.create_load(customer="Acme")
++        services.confirm_rate(load["load_id"], rate_amount=1000.00, confirmed_by="Mike")
++        services.confirm_rate(load["load_id"], rate_amount=1234.56, confirmed_by="Mike")
++        with get_connection() as conn:
++            assert conn.execute(
++                "SELECT rate_amount_cents FROM rate_confirmations"
++            ).fetchone()[0] == 123456
++
++    def test_adding_the_columns_is_idempotent(self, database):
++        with get_connection() as conn:
++            assert init_money_schema(conn)["added"] == []
++
++    def test_integrity_holds_across_a_populated_database(self, database):
++        load = services.create_load(customer="Acme")
++        services.confirm_rate(load["load_id"], rate_amount=1875.40, confirmed_by="Mike")
++        for _ in range(50):
++            services.add_expense(load["load_id"], category="fuel", amount=18.35)
++        with get_connection() as conn:
++            assert verify_money_integrity(conn)["ok"]
++
++    def test_integrity_reports_a_value_that_was_never_whole_cents(self, database):
++        """A third-party import, or a rate typed to four decimals. Worth saying so."""
++        load = services.create_load(customer="Acme")
++        services.add_expense(load["load_id"], category="fuel", amount=10.00)
++        with get_connection() as conn:
++            conn.execute("UPDATE expenses SET amount = 10.007")
++            result = verify_money_integrity(conn)
++        assert result["ok"] is False
++        assert result["findings"][0]["table"] == "expenses"
++
++
++class TestTheReportsThatUsedToDisagree:
++    def test_the_financial_dashboard_total_is_exact(self, database):
++        load = services.create_load(customer="Acme")
++        for _ in range(300):
++            services.add_expense(load["load_id"], category="fuel", amount=18.35)
++
++        dashboard = services.get_financial_dashboard()
++        assert dashboard["total_expenses_cents"] == money.to_cents(5505.00)
++        assert dashboard["total_expenses"] == 5505.00
++
++    def test_revenue_across_many_loads_accumulates_without_drift(self, database):
++        for _ in range(200):
++            load = services.create_load(customer="Acme")
++            services.confirm_rate(load["load_id"], rate_amount=1425.33, confirmed_by="Mike")
++
++        dashboard = services.get_financial_dashboard()
++        assert dashboard["total_revenue_cents"] == money.to_cents(1425.33) * 200
++        assert dashboard["loads_with_rate"] == 200
++
++    def test_profit_is_the_difference_of_two_exact_numbers(self, database):
++        load = services.create_load(customer="Acme")
++        services.confirm_rate(load["load_id"], rate_amount=1000.10, confirmed_by="Mike")
++        services.add_expense(load["load_id"], category="fuel", amount=30.03)
++
++        dashboard = services.get_financial_dashboard()
++        assert dashboard["total_profit_cents"] == money.to_cents(970.07)
++        assert dashboard["total_profit"] == 970.07
++
++    def test_a_per_mile_rate_becomes_revenue_once(self, database):
++        load = services.create_load(customer="Acme")
++        services.confirm_rate(
++            load["load_id"], rate_amount=2.47, rate_type="per_mile",
++            distance_miles=1140, confirmed_by="Mike",
++        )
++        rows = store.get_load_financial_rows()
++        assert rows[0]["revenue_cents"] == money.to_cents(2815.80)
++
++    def test_the_chart_and_the_dashboard_agree_to_the_cent(self, database):
++        """The exact disagreement the round-then-sum convention was introduced to paper over."""
++        for i in range(120):
++            load = services.create_load(customer="Acme")
++            services.confirm_rate(load["load_id"], rate_amount=1000.0 + i * 0.01, confirmed_by="Mike")
++
++        dashboard = services.get_financial_dashboard()
++        charts = services.get_chart_data()
++        charted = sum(m["revenue_cents"] for m in charts["monthly_revenue"])
++        assert charted == dashboard["total_revenue_cents"]
++
++    def test_settlement_totals_are_exact(self, database):
++        """Settlement money is derived from the rate confirmation, so build one."""
++        for _ in range(3):
++            load = services.create_load(customer="Acme")
++            services.confirm_rate(load["load_id"], rate_amount=1000.10, confirmed_by="Mike")
++            services.create_settlement(load["load_id"])
++
++        rollup = store.get_settlement_rollup()
++        assert isinstance(rollup["total_outstanding_cents"], int)
++        assert rollup["total_paid_cents"] == 0
++        assert money.to_float(rollup["total_outstanding_cents"]) == rollup["total_outstanding"]
+-- 
+2.43.0
+
